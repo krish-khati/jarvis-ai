@@ -1,0 +1,566 @@
+/<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>J.A.R.V.I.S</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --void: #010409;
+    --cyan: #2de2ff;
+    --cyan-glow: rgba(45, 226, 255, 0.55);
+    --hot: #ff5a1f;
+    --hot-glow: rgba(255, 90, 31, 0.6);
+    --gold: #ffc23d;
+    --text: #d7f6ff;
+    --panel: rgba(3, 18, 30, 0.55);
+    --line: rgba(45, 226, 255, 0.3);
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --void: #010409; } }
+  :root[data-theme="dark"] { --void: #010409; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--void);
+    color: var(--text);
+    font-family: "Rajdhani", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  /* ---------- Background layers ---------- */
+  #scene { position: fixed; inset: 0; z-index: 1; transition: opacity 1.2s ease, filter 1.2s ease; }
+  .bg {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(circle at 50% 42%, rgba(45,226,255,0.14), transparent 45%),
+      radial-gradient(circle at 50% 42%, rgba(255,90,31,0.07), transparent 65%);
+    transition: opacity 1s;
+  }
+  .hex {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.16;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='98'%3E%3Cpath d='M28 66 0 50V16L28 0l28 16v34zM28 98 0 82' fill='none' stroke='%232de2ff' stroke-width='0.6'/%3E%3C/svg%3E");
+    mask-image: radial-gradient(circle at 50% 45%, transparent 18%, #000 75%);
+    -webkit-mask-image: radial-gradient(circle at 50% 45%, transparent 18%, #000 75%);
+    transition: opacity 1s;
+  }
+  .scan {
+    position: fixed; left: 0; right: 0; height: 140px; z-index: 2; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, rgba(45,226,255,0.07), transparent);
+    animation: scan 6s linear infinite;
+  }
+  @keyframes scan { from { top: -140px; } to { top: 100%; } }
+  .vignette { position: fixed; inset: 0; z-index: 2; pointer-events: none; box-shadow: inset 0 0 180px 40px #000; }
+
+  /* ---------- HUD shell ---------- */
+  .hud { position: fixed; z-index: 4; transition: opacity 0.6s ease, transform 0.8s cubic-bezier(.2,.9,.2,1.2); }
+  .top { top: calc(16px + env(safe-area-inset-top, 0px)); left: 24px; right: 24px; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
+  .left { left: 24px; top: 50%; transform: translateY(-46%); width: 230px; }
+  .right { right: 24px; top: 50%; transform: translateY(-46%); width: 230px; }
+
+  .brand {
+    position: relative; font-family: "Orbitron", sans-serif; font-weight: 900;
+    font-size: 1.9rem; letter-spacing: 0.32em; color: var(--cyan);
+    text-shadow: 0 0 14px var(--cyan-glow), 0 0 40px var(--cyan-glow);
+  }
+  .brand::before, .brand::after { content: attr(data-t); position: absolute; inset: 0; opacity: 0; }
+  body.waking .brand::before { color: var(--hot); animation: glitch 0.35s steps(2) 4; opacity: 1; }
+  body.waking .brand::after  { color: #fff; animation: glitch 0.35s steps(2) reverse 4; opacity: 1; }
+  @keyframes glitch {
+    0% { clip-path: inset(10% 0 70% 0); transform: translate(-6px, 0); }
+    50% { clip-path: inset(60% 0 10% 0); transform: translate(6px, 0); }
+    100% { clip-path: inset(30% 0 40% 0); transform: translate(-3px, 0); }
+  }
+  .tag { font-size: 0.95rem; letter-spacing: 0.08em; opacity: 0.7; margin-top: 2px; }
+  .status {
+    display: inline-flex; align-items: center; gap: 10px; margin-top: 12px;
+    padding: 5px 14px 5px 10px; border: 1px solid var(--line); background: var(--panel);
+    font-weight: 700; font-size: 1.05rem;
+    clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); animation: blink 1.2s infinite; }
+  body[data-state="thinking"] .dot { background: var(--hot); box-shadow: 0 0 12px var(--hot); }
+  @keyframes blink { 50% { opacity: 0.25; } }
+  .clock { font-family: "Orbitron", sans-serif; font-weight: 700; font-size: 2.3rem; color: var(--cyan); text-shadow: 0 0 14px var(--cyan-glow); text-align: right; }
+  .date { text-align: right; opacity: 0.75; font-size: 1.05rem; }
+
+  .panel {
+    position: relative; background: var(--panel); border: 1px solid var(--line);
+    padding: 14px 16px; margin-bottom: 14px;
+    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .panel::before { content: ""; position: absolute; left: 0; top: 0; width: 38px; height: 2px; background: var(--hot); box-shadow: 0 0 8px var(--hot); }
+  .panel h3 { margin: 0 0 10px; font-family: "Orbitron", sans-serif; font-size: 0.8rem; letter-spacing: 0.2em; color: var(--cyan); font-weight: 700; }
+  .stat { margin-bottom: 11px; }
+  .stat-row { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 4px; }
+  .stat-row span:last-child { font-family: "Orbitron", sans-serif; font-size: 0.85rem; color: var(--cyan); }
+  .segs { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: 8px; }
+  .segs i { background: rgba(45,226,255,0.12); transition: background 0.3s, box-shadow 0.3s; }
+  .segs i.on { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+  .segs i.on.hot { background: var(--hot); box-shadow: 0 0 6px var(--hot); }
+  #radar { display: block; width: 100%; aspect-ratio: 1; }
+  .log { font-size: 0.98rem; line-height: 1.55; min-height: 9em; }
+  .log div { opacity: 0.55; }
+  .log div:first-child { opacity: 1; color: var(--cyan); }
+  .mods { list-style: none; margin: 0; padding: 0; font-weight: 600; }
+  .mods li { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed rgba(45,226,255,0.15); }
+  .mods li span:last-child { color: var(--cyan); font-family: "Orbitron", sans-serif; font-size: 0.72rem; letter-spacing: 0.1em; align-self: center; }
+
+  #wave { position: fixed; z-index: 3; left: 50%; transform: translateX(-50%); width: min(520px, 86vw); height: 60px; transition: opacity 0.6s; }
+
+  /* Chat */
+  .chat {
+    left: 50%; transform: translateX(-50%);
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    width: min(700px, calc(100% - 28px));
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+  }
+  .messages { max-height: 22vh; overflow-y: auto; padding: 12px 18px 4px; font-size: 1.12rem; line-height: 1.45; }
+  .msg { margin-bottom: 8px; }
+  .msg b { font-family: "Orbitron", sans-serif; font-size: 0.7rem; letter-spacing: 0.18em; margin-right: 10px; }
+  .msg.user b { color: var(--hot); }
+  .msg.ai b { color: var(--cyan); }
+  .input-row { display: flex; border-top: 1px solid var(--line); }
+  .input-row input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 1.1rem; padding: 12px 18px; outline: none; }
+  .input-row input::placeholder { color: rgba(45,226,255,0.45); }
+  .input-row button { background: transparent; border: 0; border-left: 1px solid var(--line); color: var(--cyan); font-family: "Orbitron", sans-serif; font-size: 0.78rem; letter-spacing: 0.18em; padding: 0 20px; cursor: pointer; }
+  .input-row button:hover { background: rgba(45,226,255,0.12); }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* ---------- Sleep screen ---------- */
+  #sleep {
+    position: fixed; inset: 0; z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+    pointer-events: none; opacity: 0; transition: opacity 0.8s ease;
+  }
+  .ember { width: 14px; height: 14px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 20px 6px var(--cyan-glow); animation: breathe 3.2s ease-in-out infinite; }
+  @keyframes breathe { 50% { transform: scale(0.55); opacity: 0.35; } }
+  .sleep-hint { font-family: "Orbitron", sans-serif; letter-spacing: 0.3em; font-size: 0.85rem; color: rgba(45,226,255,0.55); }
+  body.sleep #sleep { opacity: 1; }
+  body.sleep #scene { opacity: 0.12; filter: blur(3px); }
+  body.sleep .bg, body.sleep .hex, body.sleep .scan { opacity: 0; }
+  body.sleep .hud, body.sleep #wave { opacity: 0; pointer-events: none; }
+  body.sleep .top { transform: translateY(-60px); }
+  body.sleep .left { transform: translate(-120%, -46%); }
+  body.sleep .right { transform: translate(120%, -46%); }
+  body.sleep .chat { transform: translate(-50%, 140%); }
+
+  /* ---------- Wake FX ---------- */
+  #flash { position: fixed; inset: 0; z-index: 7; background: #fff; opacity: 0; pointer-events: none; }
+  body.waking #flash { animation: flash 0.7s ease-out; }
+  @keyframes flash { 0% { opacity: 0.9; } 100% { opacity: 0; } }
+  .shock { position: fixed; left: 50%; top: 42%; z-index: 5; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 3px solid var(--cyan); box-shadow: 0 0 30px var(--cyan), inset 0 0 30px var(--cyan); opacity: 0; pointer-events: none; }
+  .shock.b { border-color: var(--hot); box-shadow: 0 0 30px var(--hot), inset 0 0 30px var(--hot); }
+  body.waking .shock { animation: shock 1.3s cubic-bezier(.1,.7,.2,1) forwards; }
+  body.waking .shock.b { animation-delay: 0.18s; }
+  body.waking .shock.c { animation-delay: 0.36s; }
+  @keyframes shock { 0% { transform: scale(0.2); opacity: 1; } 100% { transform: scale(60); opacity: 0; } }
+  body.waking { animation: shake 0.5s; }
+  @keyframes shake { 20% { transform: translate(-6px, 4px); } 40% { transform: translate(5px, -4px); } 60% { transform: translate(-3px, 2px); } 80% { transform: translate(2px, -1px); } }
+
+  .preview-hint { position: fixed; z-index: 8; right: 16px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); font-size: 0.85rem; opacity: 0.45; pointer-events: none; }
+  .preview-hint kbd { font-family: "Orbitron", sans-serif; font-size: 0.7rem; border: 1px solid var(--line); padding: 1px 5px; }
+
+  @media (max-width: 900px) {
+    .left, .right { display: none; }
+    .clock { font-size: 1.6rem; }
+    .brand { font-size: 1.3rem; }
+    .tag { display: none; }
+    .preview-hint { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scan, .dot, .ember { animation: none; }
+    body.waking, body.waking #flash, body.waking .shock { animation: none; }
+  }
+</style>
+</head>
+<body class="sleep" data-state="sleeping">
+<div class="bg" aria-hidden="true"></div>
+<div class="hex" aria-hidden="true"></div>
+<div id="scene" aria-hidden="true"></div>
+<div class="scan" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<canvas id="wave" aria-hidden="true"></canvas>
+
+<div class="shock" aria-hidden="true"></div>
+<div class="shock b" aria-hidden="true"></div>
+<div class="shock c" aria-hidden="true"></div>
+<div id="flash" aria-hidden="true"></div>
+
+<div id="sleep" aria-live="polite">
+  <div class="ember"></div>
+  <div class="sleep-hint">Say “Jarvis wake up”</div>
+</div>
+
+<div class="hud top">
+  <div>
+    <div class="brand" data-t="J.A.R.V.I.S">J.A.R.V.I.S</div>
+    <div class="tag">Just A Rather Very Intelligent System</div>
+    <div class="status" role="status"><span class="dot"></span><span id="stateText">Online</span></div>
+  </div>
+  <div>
+    <div class="clock" id="clock">00:00:00</div>
+    <div class="date" id="date"></div>
+  </div>
+</div>
+
+<div class="hud left">
+  <div class="panel">
+    <h3>System</h3>
+    <div class="stat"><div class="stat-row"><span>CPU</span><span id="cpuV">0%</span></div><div class="segs" id="cpuS"></div></div>
+    <div class="stat"><div class="stat-row"><span>Memory</span><span id="ramV">0%</span></div><div class="segs" id="ramS"></div></div>
+    <div class="stat"><div class="stat-row"><span>Battery</span><span id="batV">--</span></div><div class="segs" id="batS"></div></div>
+  </div>
+  <div class="panel">
+    <h3>Network scan</h3>
+    <canvas id="radar" width="360" height="360"></canvas>
+  </div>
+</div>
+
+<div class="hud right">
+  <div class="panel">
+    <h3>Activity</h3>
+    <div class="log" id="log"></div>
+  </div>
+  <div class="panel">
+    <h3>Modules</h3>
+    <ul class="mods">
+      <li><span>Voice</span><span>Online</span></li>
+      <li><span>Web search</span><span>Online</span></li>
+      <li><span>Apps control</span><span>Online</span></li>
+      <li><span>Gemini core</span><span>Online</span></li>
+    </ul>
+  </div>
+</div>
+
+<div class="hud chat">
+  <div class="messages" id="messages" aria-live="polite"></div>
+  <div class="input-row">
+    <input id="input" type="text" placeholder="Bolo ya type karo, sir…" autocomplete="off" aria-label="Message to JARVIS">
+    <button id="send">Send</button>
+  </div>
+</div>
+
+<div class="preview-hint" id="hint">Preview: <kbd>W</kbd> wake · <kbd>S</kbd> sleep · <kbd>1-4</kbd> states</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const body = document.body;
+
+  /* ================= 3D CORE ================= */
+  const host = document.getElementById("scene");
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  host.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  camera.position.z = 8;
+  const CYAN = new THREE.Color("#2de2ff"), HOT = new THREE.Color("#ff5a1f");
+  const orb = new THREE.Group(); scene.add(orb);
+  const add = (m) => { orb.add(m); return m; };
+  const ADD = THREE.AdditiveBlending;
+
+  // glow sprite
+  const gc = document.createElement("canvas"); gc.width = gc.height = 128;
+  const gx = gc.getContext("2d"), gr = gx.createRadialGradient(64,64,0,64,64,64);
+  gr.addColorStop(0,"rgba(255,255,255,1)"); gr.addColorStop(0.2,"rgba(45,226,255,0.9)"); gr.addColorStop(1,"rgba(45,226,255,0)");
+  gx.fillStyle = gr; gx.fillRect(0,0,128,128);
+  const glow = add(new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(gc), blending: ADD, transparent: true, depthWrite: false })));
+
+  const core = add(new THREE.Mesh(new THREE.SphereGeometry(0.38, 32, 32), new THREE.MeshBasicMaterial({ color: 0xf2feff })));
+  const inner = add(new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(0.75, 0)),
+    new THREE.LineBasicMaterial({ color: HOT, transparent: true, opacity: 0.7, blending: ADD })));
+  const shell = add(new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.15, 1)),
+    new THREE.LineBasicMaterial({ color: CYAN, transparent: true, opacity: 0.4, blending: ADD })));
+
+  // particle shell
+  const N = 2200, base = new Float32Array(N*3), pos = new Float32Array(N*3);
+  for (let i = 0; i < N; i++) {
+    const th = Math.random()*Math.PI*2, ph = Math.acos(2*Math.random()-1), r = 1.6 + Math.random()*0.15;
+    base.set([r*Math.sin(ph)*Math.cos(th), r*Math.sin(ph)*Math.sin(th), r*Math.cos(ph)], i*3);
+  }
+  pos.set(base);
+  const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const pMat = new THREE.PointsMaterial({ color: CYAN, size: 0.03, transparent: true, blending: ADD, depthWrite: false });
+  const particles = add(new THREE.Points(pGeo, pMat));
+
+  // segmented rings
+  const rings = [];
+  const ringDef = [[2.1, 24, 0.7, 1.35, 0.3, CYAN], [2.4, 60, 0.35, -0.5, 0.8, CYAN], [2.7, 6, 0.8, 0.2, -0.4, HOT]];
+  ringDef.forEach(([r, segs, fill, rx, ry, col]) => {
+    const g = new THREE.Group();
+    for (let s = 0; s < segs; s++) {
+      const arc = (Math.PI*2/segs)*fill;
+      const m = new THREE.Mesh(new THREE.TorusGeometry(r, 0.018, 6, 24, arc), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.8, blending: ADD }));
+      m.rotation.z = s*(Math.PI*2/segs); g.add(m);
+    }
+    g.rotation.set(rx, ry, 0); orb.add(g); rings.push(g);
+  });
+
+  // lightning arcs
+  const ARCS = 7, arcs = [];
+  for (let a = 0; a < ARCS; a++) {
+    const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(10*3), 3));
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: a % 3 === 0 ? HOT : CYAN, transparent: true, opacity: 0, blending: ADD }));
+    orb.add(line); arcs.push(line);
+  }
+  const rv = () => { const v = new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5); return v.normalize(); };
+  function zap(line) {
+    const a = rv().multiplyScalar(0.4), b = rv().multiplyScalar(1.6 + Math.random()*0.9), arr = line.geometry.attributes.position.array;
+    for (let i = 0; i < 10; i++) {
+      const t = i/9, p = a.clone().lerp(b, t);
+      if (i > 0 && i < 9) p.add(rv().multiplyScalar(0.18));
+      arr[i*3] = p.x; arr[i*3+1] = p.y; arr[i*3+2] = p.z;
+    }
+    line.geometry.attributes.position.needsUpdate = true;
+    line.material.opacity = 1;
+  }
+
+  function resize() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h); camera.aspect = w/h;
+    camera.position.z = w < 900 ? 10.5 : 8; camera.updateProjectionMatrix();
+    orb.position.y = w < 900 ? 1.1 : 0.6;
+    placeWave();
+  }
+
+  /* ================= STATES ================= */
+  const STATES = {
+    sleeping:  { glow: 0.15, speed: 0.15, arcs: 0,    label: "Sleeping" },
+    standby:   { glow: 0.75, speed: 0.6,  arcs: 0.03, label: "Online" },
+    listening: { glow: 1.0,  speed: 1.8,  arcs: 0.12, label: "Listening…" },
+    thinking:  { glow: 0.9,  speed: 3.5,  arcs: 0.25, label: "Searching & thinking…" },
+    speaking:  { glow: 1.0,  speed: 1.1,  arcs: 0.08, label: "Speaking" }
+  };
+  let state = "sleeping", cur = { glow: 0.15, speed: 0.15 }, level = 0, extLevel = null, burst = 0;
+  function setState(s) {
+    if (!STATES[s]) return;
+    state = s; body.dataset.state = s;
+    document.getElementById("stateText").textContent = STATES[s].label;
+  }
+
+  const clock = new THREE.Clock(); let last = 0;
+  function tick() {
+    const t = clock.getElapsedTime(); const dt = Math.min(t - last, 0.05); last = t;
+    const S = STATES[state];
+    cur.glow += (S.glow - cur.glow)*0.05; cur.speed += (S.speed - cur.speed)*0.05;
+    burst *= 0.94;
+
+    const sim = state === "speaking" ? Math.abs(Math.sin(t*8)*0.55 + Math.sin(t*21)*0.45) : (state === "listening" ? 0.15 + Math.abs(Math.sin(t*3))*0.1 : 0);
+    level += (((extLevel !== null && state === "speaking") ? extLevel : sim) - level)*0.25;
+
+    const sp = (reduced ? 0.25 : 1) * (cur.speed + burst*6);
+    shell.rotation.y += 0.25*sp*dt; shell.rotation.x += 0.12*sp*dt;
+    inner.rotation.y -= 0.6*sp*dt; inner.rotation.z += 0.3*sp*dt;
+    particles.rotation.y -= 0.15*sp*dt;
+    rings[0].rotation.z += 0.4*sp*dt; rings[1].rotation.z -= 0.6*sp*dt; rings[2].rotation.z += 0.9*sp*dt;
+
+    const arr = pGeo.attributes.position.array;
+    for (let i = 0; i < N; i++) {
+      const by = base[i*3+1];
+      let k = 1 + level*0.32*Math.sin(by*6 + t*11) + burst*1.4;
+      if (state === "thinking") k += 0.1*Math.max(0, Math.sin(by*3 - t*6));
+      arr[i*3] = base[i*3]*k; arr[i*3+1] = by*k; arr[i*3+2] = base[i*3+2]*k;
+    }
+    pGeo.attributes.position.needsUpdate = true;
+
+    const pulse = 1 + level*0.3 + burst*0.8 + (reduced ? 0 : Math.sin(t*2.2)*0.04);
+    core.scale.setScalar(pulse);
+    glow.scale.setScalar(3.6*cur.glow*pulse); glow.material.opacity = Math.min(1, cur.glow + burst);
+    shell.material.opacity = 0.15 + cur.glow*0.4;
+    pMat.opacity = 0.25 + cur.glow*0.6;
+    shell.material.color.lerp(state === "thinking" ? HOT : CYAN, 0.05);
+    pMat.color.lerp(state === "thinking" ? HOT : CYAN, 0.05);
+
+    const chance = reduced ? 0 : S.arcs + burst*0.8;
+    arcs.forEach(l => { if (Math.random() < chance) zap(l); l.material.opacity *= 0.8; });
+
+    renderer.render(scene, camera);
+    drawWave(t); drawRadar(t);
+    requestAnimationFrame(tick);
+  }
+
+  /* ================= WAVEFORM ================= */
+  const wave = document.getElementById("wave"), wx = wave.getContext("2d");
+  function placeWave() {
+    const r = Math.min(innerWidth, innerHeight);
+    wave.style.top = (innerWidth < 900 ? innerHeight*0.56 : innerHeight*0.64) + "px";
+    wave.width = wave.clientWidth * Math.min(devicePixelRatio, 2);
+    wave.height = 60 * Math.min(devicePixelRatio, 2);
+  }
+  function drawWave(t) {
+    const W = wave.width, H = wave.height, bars = 56, bw = W/bars;
+    wx.clearRect(0,0,W,H);
+    for (let i = 0; i < bars; i++) {
+      const c = Math.abs(i - bars/2)/(bars/2);
+      const n = Math.abs(Math.sin(i*1.7 + t*9) * Math.cos(i*0.6 - t*5));
+      const h = Math.max(2*devicePixelRatio, (0.06 + level*1.1*n*(1 - c*0.8)) * H);
+      wx.fillStyle = state === "thinking" ? "#ff5a1f" : "#2de2ff";
+      wx.globalAlpha = 0.35 + (1 - c)*0.6;
+      wx.fillRect(i*bw + bw*0.2, (H - h)/2, bw*0.6, h);
+    }
+    wx.globalAlpha = 1;
+  }
+
+  /* ================= RADAR ================= */
+  const radar = document.getElementById("radar"), rx = radar.getContext("2d");
+  const blips = Array.from({ length: 6 }, () => ({ a: Math.random()*Math.PI*2, r: 0.2 + Math.random()*0.7, life: 0 }));
+  function drawRadar(t) {
+    if (!radar.offsetParent) return;
+    const S = radar.width, c = S/2, R = c - 6;
+    rx.clearRect(0,0,S,S);
+    rx.strokeStyle = "rgba(45,226,255,0.35)"; rx.lineWidth = 1.5;
+    [1, 0.66, 0.33].forEach(k => { rx.beginPath(); rx.arc(c, c, R*k, 0, Math.PI*2); rx.stroke(); });
+    rx.beginPath(); rx.moveTo(c - R, c); rx.lineTo(c + R, c); rx.moveTo(c, c - R); rx.lineTo(c, c + R); rx.stroke();
+    const sweep = (t*1.6) % (Math.PI*2);
+    const g = rx.createConicGradient ? rx.createConicGradient(sweep - 0.9, c, c) : null;
+    if (g) { g.addColorStop(0, "rgba(45,226,255,0)"); g.addColorStop(0.14, "rgba(45,226,255,0.45)"); g.addColorStop(0.1401, "rgba(45,226,255,0)"); rx.fillStyle = g; rx.beginPath(); rx.arc(c, c, R, 0, Math.PI*2); rx.fill(); }
+    rx.strokeStyle = "#2de2ff"; rx.lineWidth = 2; rx.beginPath(); rx.moveTo(c, c); rx.lineTo(c + Math.cos(sweep)*R, c + Math.sin(sweep)*R); rx.stroke();
+    blips.forEach(b => {
+      const d = Math.abs(((sweep - b.a) + Math.PI*2) % (Math.PI*2));
+      if (d < 0.05) b.life = 1;
+      b.life *= 0.985;
+      if (b.life > 0.02) {
+        rx.fillStyle = `rgba(255,90,31,${b.life})`;
+        rx.beginPath(); rx.arc(c + Math.cos(b.a)*R*b.r, c + Math.sin(b.a)*R*b.r, 5, 0, Math.PI*2); rx.fill();
+      }
+    });
+  }
+
+  /* ================= SOUND FX ================= */
+  let ac = null;
+  function audio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === "suspended") ac.resume(); } catch (e) {} return ac; }
+  function wakeSound() {
+    const a = audio(); if (!a) return;
+    const now = a.currentTime;
+    const boom = a.createOscillator(), bg = a.createGain();
+    boom.type = "sine"; boom.frequency.setValueAtTime(140, now); boom.frequency.exponentialRampToValueAtTime(35, now + 1.2);
+    bg.gain.setValueAtTime(0.7, now); bg.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
+    boom.connect(bg).connect(a.destination); boom.start(now); boom.stop(now + 1.5);
+    const len = a.sampleRate * 1.2, buf = a.createBuffer(1, len, a.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random()*2 - 1) * (1 - i/len);
+    const n = a.createBufferSource(), f = a.createBiquadFilter(), ng = a.createGain();
+    n.buffer = buf; f.type = "bandpass"; f.Q.value = 2;
+    f.frequency.setValueAtTime(300, now); f.frequency.exponentialRampToValueAtTime(5000, now + 0.9);
+    ng.gain.setValueAtTime(0.35, now); ng.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+    n.connect(f).connect(ng).connect(a.destination); n.start(now);
+  }
+  function blip(freq = 880) {
+    const a = audio(); if (!a) return;
+    const o = a.createOscillator(), g = a.createGain(), now = a.currentTime;
+    o.type = "triangle"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    o.connect(g).connect(a.destination); o.start(now); o.stop(now + 0.16);
+  }
+
+  /* ================= STATS ================= */
+  ["cpuS", "ramS", "batS"].forEach(id => { const el = document.getElementById(id); for (let i = 0; i < 20; i++) el.appendChild(document.createElement("i")); });
+  function setBar(id, v) {
+    v = Math.max(0, Math.min(100, v));
+    document.getElementById(id + "V").textContent = Math.round(v) + "%";
+    const on = Math.round(v/5);
+    [...document.getElementById(id + "S").children].forEach((s, i) => { s.className = i < on ? ("on" + (v > 80 && id !== "bat" ? " hot" : "")) : ""; });
+  }
+  let fromPy = false, cpu = 24, ram = 52;
+  setInterval(() => { if (fromPy) return; cpu = Math.max(4, Math.min(96, cpu + (Math.random() - 0.5)*14)); ram = Math.max(30, Math.min(88, ram + (Math.random() - 0.5)*4)); setBar("cpu", cpu); setBar("ram", ram); }, 1400);
+  setBar("bat", 100);
+  if (navigator.getBattery) navigator.getBattery().then(b => { const u = () => { if (!fromPy) setBar("bat", b.level*100); }; u(); b.addEventListener("levelchange", u); }).catch(() => {});
+
+  function updClock() {
+    const d = new Date();
+    document.getElementById("clock").textContent = d.toLocaleTimeString("en-GB");
+    document.getElementById("date").textContent = d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  }
+  setInterval(updClock, 1000); updClock();
+
+  /* ================= LOG & CHAT ================= */
+  const logEl = document.getElementById("log");
+  function log(line) {
+    const d = document.createElement("div");
+    d.textContent = new Date().toLocaleTimeString("en-GB").slice(0, 5) + "  " + line;
+    logEl.prepend(d); while (logEl.children.length > 7) logEl.lastChild.remove();
+  }
+  const msgs = document.getElementById("messages");
+  function addMessage(who, text, typing) {
+    const el = document.createElement("div");
+    el.className = "msg " + (who === "user" ? "user" : "ai");
+    const b = document.createElement("b"); b.textContent = who === "user" ? "KRISH" : "JARVIS";
+    const s = document.createElement("span"); el.append(b, s); msgs.appendChild(el);
+    if (!typing || reduced) { s.textContent = text; msgs.scrollTop = msgs.scrollHeight; return Promise.resolve(); }
+    return new Promise(res => { let i = 0; const iv = setInterval(() => { s.textContent = text.slice(0, ++i); msgs.scrollTop = msgs.scrollHeight; if (i >= text.length) { clearInterval(iv); res(); } }, 20); });
+  }
+
+  const hasPy = () => !!(window.pywebview && window.pywebview.api);
+  const input = document.getElementById("input");
+  async function send() {
+    const text = input.value.trim(); if (!text) return;
+    input.value = ""; blip(660);
+    addMessage("user", text); setState("thinking"); log("Processing: " + text.slice(0, 22));
+    let reply;
+    try {
+      if (hasPy() && window.pywebview.api.ask) reply = await window.pywebview.api.ask(text);
+      else { await new Promise(r => setTimeout(r, 1300)); reply = "Preview mode, sir. Python backend connect hote hi main asli jawab dunga."; }
+    } catch (e) { reply = "Backend se connection nahi hua. Python app chal raha hai, check kijiye."; }
+    setState("speaking"); await addMessage("ai", reply, true); setState("standby");
+  }
+  document.getElementById("send").addEventListener("click", send);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+
+  /* ================= WAKE / SLEEP ================= */
+  let awake = false;
+  function greeting() { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
+  async function wake(text) {
+    if (awake) return; awake = true;
+    wakeSound();
+    body.classList.add("waking"); body.classList.remove("sleep");
+    burst = 1; setState("listening");
+    ["Wake word detected", "Core reactor online", "Voice module linked", "Search network online"].forEach((l, i) => setTimeout(() => { log(l); blip(700 + i*140); }, 250 + i*260));
+    setTimeout(() => body.classList.remove("waking"), 1500);
+    await new Promise(r => setTimeout(r, 1300));
+    setState("speaking");
+    await addMessage("ai", text || (greeting() + ", Krish. Sab systems online hain. Bataiye, kya karna hai?"), true);
+    setState("listening");
+  }
+  function sleep() {
+    if (!awake) return; awake = false;
+    blip(300); log("Entering sleep mode");
+    setState("sleeping"); body.classList.add("sleep");
+  }
+
+  // Preview-only keyboard controls (Python app ke andar ye hint chhup jaata hai)
+  addEventListener("keydown", e => {
+    if (document.activeElement === input) return;
+    const k = e.key.toLowerCase();
+    if (k === "w") wake(); else if (k === "s") sleep();
+    else if (awake && "1234".includes(k)) setState(["standby", "listening", "thinking", "speaking"][+k - 1]);
+  });
+  document.getElementById("sleep").style.pointerEvents = "auto";
+  document.getElementById("sleep").addEventListener("click", () => { if (!hasPy()) wake(); });
+  addEventListener("pywebviewready", () => { document.getElementById("hint").style.display = "none"; });
+
+  /* ================= PYTHON BRIDGE ================= */
+  // Python: window.evaluate_js("jarvis.wake()")
+  window.jarvis = {
+    wake, sleep, setState, log,
+    addMessage: (who, text) => addMessage(who, text, who !== "user"),
+    setLevel: v => { extLevel = Math.max(0, Math.min(1, v)); },
+    setStats: (c, r, b) => { fromPy = true; setBar("cpu", c); setBar("ram", r); if (b != null) setBar("bat", b); }
+  };
+
+  addEventListener("resize", resize); resize();
+  setState("sleeping");
+  tick();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Secret API key - kabhi GitHub pe upload nahi hona chahiye
+.env
+
+# Virtual environment folder
+venv/
+
+# Vosk model (bada hai, alag se download hota hai)
+models/
+
+# Saved awaaz files (apne aap dobara ban jaati hain)
+voice_cache/
+
+# JARVIS ki memory - aapki personal baatein, GitHub pe nahi jaani chahiye
+memory.json
+memory.json.broken
+
+# Python cache files
+__pycache__/

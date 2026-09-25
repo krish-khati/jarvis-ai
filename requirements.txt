@@ -1,0 +1,24 @@
+google-genai
+groq
+python-dotenv
+
+# Voice mode
+vosk
+SpeechRecognition
+edge-tts
+pygame-ce
+elevenlabs
+sounddevice
+numpy
+
+# Tools
+ddgs
+pywhatkit
+psutil
+pycaw
+pillow
+pyautogui
+mss
+
+# 3D UI window
+pywebview
