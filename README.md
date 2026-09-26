@@ -1,6 +1,6 @@
 # J.A.R.V.I.S
 
-Krish ka personal AI assistant: Hinglish mein bolo ya type karo, JARVIS sunta hai, sochta hai, PC chalata hai aur British awaaz mein jawab deta hai. 3D HUD window ke saath.
+Krish ka personal AI assistant: Hinglish mein bolo ya type karo, JARVIS sunta hai, sochta hai, PC chalata hai aur British awaaz mein jawab deta hai. Full-screen sci-fi HUD aur system tray ke saath.
 
 ## Kya-kya karta hai
 
@@ -12,7 +12,8 @@ Krish ka personal AI assistant: Hinglish mein bolo ya type karo, JARVIS sunta ha
 - **Long-term memory:** "yaad rakhna ki…", "bhool jao", "memory dikhao", "memory 2 hatao", ya type karke `remember: GitHub = xyz`.
 - **Screen vision:** "screen pe kya hai", "is error ko samjhao". Screenshot sirf RAM mein rehta hai, disk pe save nahi hota.
 - **Awaaz:** ElevenLabs; wo na chale to edge-tts backup.
-- **3D UI:** `ui/index.html` pywebview window mein khulta hai (orb, chat, stats, activity log).
+- **HUD UI:** `ui/index.html` frameless full-screen window: ghoomta dial aur awaaz ke saath naachti gol waveform, clock, CPU/RAM/Battery/Disk/Network, Activity (Running/Done/Failed), Weather, Conversation, aur dock buttons (Browser, YouTube, WhatsApp, Music, Files, Scan screen) + command box.
+- **Background + tray:** window shuru mein chhupi rehti hai. "Jarvis wake up" pe saamne aati hai, sleep / 20s chup / Esc pe chhup jaati hai. Tray icon: **Show Jarvis** / **Quit**.
 
 ## Safety
 
@@ -53,7 +54,7 @@ jarvis-ai\models\vosk-model-small-en-in-0.4\
 ## Chalana
 
 ```powershell
-python main.py        # Voice + 3D UI window (Alt+F4 = band)
+python main.py        # Voice + HUD (window chhupi shuru hoti hai - "Jarvis wake up" ya tray > Show Jarvis)
 python jarvis.py      # Sirf text chat terminal mein
 ```
 
@@ -69,15 +70,15 @@ $env:DRY_RUN = '1'; python main.py
 
 | File | Kaam |
 |---|---|
-| `main.py` | Voice loop (sleep ↔ active), pywebview window, UI chat API |
+| `main.py` | Voice loop (sleep ↔ active), pywebview window (show/hide), tray icon, stats, UI chat API |
 | `voice.py` | Wake word, mic, Google speech, ElevenLabs/edge-tts, beep |
 | `brain.py` | Shortcut → Gemini → Groq, shared history, jawab ki safai |
 | `shortcuts.py` | Bina AI wale commands (time, weather, memory…) |
 | `tools.py` | Saare tools + safety lock + DRY_RUN |
 | `memory.py` | `memory.json` wali long-term memory |
 | `vision.py` | Screen capture + Gemini/Groq vision |
-| `ui.py` | Terminal + `window.jarvis` (3D UI) bridge |
-| `ui/index.html` | 3D HUD interface |
+| `ui.py` | Terminal + `window.jarvis` (HUD) bridge, window show/hide |
+| `ui/index.html` | HUD interface (ek file: HTML + CSS + JS) |
 | `jarvis.py` | Sirf text mode |
 
 ## Jo GitHub pe nahi hai (`.gitignore`)
@@ -87,5 +88,7 @@ $env:DRY_RUN = '1'; python main.py
 ## Dhyan rakhna
 
 - **Free limits:** Gemini free plan pe ~20 requests/din. Groq pe 8,000 tokens/minute, to lagatar sawaal poochne pe thoda ruk sakta hai. ElevenLabs free plan pe ~10,000 characters/mahina.
-- **Internet:** 3D UI ka orb (three.js) aur fonts internet se aate hain.
+- **Internet:** HUD ka font (Chakra Petch) Google Fonts se aata hai; internet na ho to Segoe UI dikhega.
+- **Band karna:** Esc = sirf window chhupao (JARVIS chalta rahe). Poora band: tray > **Quit**, Alt+F4, ya "Jarvis shutdown".
+- **Design preview (bina Python):** `ui/index.html#preview` browser mein kholo - demo data ke saath HUD dikhega.
 - **Mic:** shor wale kamre mein earphone/TWS mic behtar chalta hai. Tuning `voice.py` ke upar hoti hai (`NOISE_MULTIPLIER`, `MIC_MAX_THRESHOLD`, `ECHO_GUARD_MS`).
