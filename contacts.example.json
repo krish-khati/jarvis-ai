@@ -1,0 +1,14 @@
+{
+  "Mom": {
+    "number": "+91 90000 00001",
+    "aliases": ["mummy", "maa", "mom", "mother", "mumma"]
+  },
+  "Papa": {
+    "number": "+91 90000 00002",
+    "aliases": ["papa", "dad", "pitaji", "father"]
+  },
+  "Rahul": {
+    "number": "+91 90000 00003",
+    "aliases": ["rahul bhai"]
+  }
+}

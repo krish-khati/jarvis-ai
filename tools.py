@@ -57,6 +57,17 @@ def confirm(question):
     return False
 
 
+def ask_user(question):
+    """Sawaal poochh ke POORA jawab (text) lo - jaise "haan" / "nahi" / "thoda polite bana do".
+    main.py (bol ke), jarvis.py (type karke), UI (prompt box) isko badalte hain.
+    Default: None (koi jawab nahi = cancel)."""
+    return None
+
+
+# Aaye hue WhatsApp message jaisa private text: terminal mein mat dikhao (sirf UI + awaaz)
+private_reply = False
+
+
 # Is sawaal mein kaunse tools chale (naam, result) - brain.py har sawaal pe
 # ise khaali karta hai. Gemini beech mein fail ho to Groq ko pata rahe ki
 # kya ho chuka hai, taaki wo dobara na kare.
@@ -71,9 +82,10 @@ call_log = []
 #   ye seedha brain.ask() tak pahunche.
 # ============================================
 class DirectReply(BaseException):
-    def __init__(self, reply):
+    def __init__(self, reply, ok=True):
         super().__init__(reply)
         self.reply = reply
+        self.ok = ok          # False = kaam nahi hua (UI card "failed" dikhata hai)
 
 
 # ============================================
@@ -98,6 +110,13 @@ FORGET_WORDS = {"bhool", "bhul", "bhoolo", "bhulo", "forget", "delete", "hata", 
 # Screen dekhna: "screen pe kya hai", "is error ko samjhao", "is code mein galti batao"
 SCREEN_WORDS = {"screen", "screenshot", "dekho", "dekh", "dekhkar", "error", "code", "window",
                 "look", "see", "स्क्रीन", "एरर", "कोड"}
+
+# WhatsApp / calls
+MSG_WORDS = {"message", "messages", "msg", "bhejo", "bhej", "send", "reply", "whatsapp", "text",
+             "likh", "likho", "bol", "keh", "bata", "मैसेज", "भेजो"}
+CALL_WORDS = {"call", "phone", "dial", "milao", "lagao", "कॉल", "फोन"}
+END_CALL_WORDS = {"kaat", "kat", "kaato", "cut", "end", "band", "disconnect", "hang", "rakh", "काटो"}
+READ_WORDS = {"padho", "padh", "read", "sunao", "messages", "message", "msg", "dikhao", "पढ़ो"}
 
 # Volume/mute: "chup raho" (JARVIS chup ho) pe PC mute na ho jaaye
 VOLUME_WORDS = {"volume", "mute", "unmute", "awaaz", "awaz", "aawaz", "sound", "speaker",
@@ -167,9 +186,9 @@ def tool(message, needs=None):
             except Exception as e:
                 ui.log(f"Error: {e}")
                 result = f"Error while running {func.__name__}: {e}"
-            except BaseException:
-                # DirectReply (jaise "cancel kar diya") - kaam poora hua, jawab seedha jaata hai
-                ui.action(aid, title, detail, "done")
+            except DirectReply as d:
+                # Tool ne seedha jawab diya - ok=False (cancel, contact nahi mila) = failed card
+                ui.action(aid, title, detail if d.ok else d.reply[:60], "done" if d.ok else "failed")
                 raise
             failed = str(result).startswith(("Error", "BLOCKED", "Could not"))
             ui.action(aid, title, detail if not failed else str(result)[:60], "failed" if failed else "done")
@@ -623,6 +642,147 @@ def look_at_screen(question: str) -> str:
 
 
 # ============================================
+# 15. WHATSAPP + CALLS (whatsapp.py, contacts.py, notifications.py)
+#   - Hamesha pehle confirm, DRY_RUN mein sirf print
+#   - Number kabhi pura print nahi hota (sirf aakhri 4 ank)
+#   - Message ka text terminal log mein nahi jaata
+# ============================================
+_YES = {"haan", "han", "ha", "haa", "yes", "yeah", "yep", "ok", "okay", "bhejo", "bhej", "send",
+        "pakka", "theek", "sure", "sahi", "हां", "हाँ"}
+_NO = {"nahi", "nahin", "no", "mat", "cancel", "ruko", "rehne", "नहीं"}
+_EDIT = {"polite", "english", "hindi", "hinglish", "formal", "casual", "chhota", "short", "lamba",
+         "badal", "badlo", "change", "sudhar", "sudhaaro", "likh", "likho", "bana", "banao",
+         "rewrite", "friendly", "sweet", "achha", "acchha", "aur", "add", "jodo", "hatao"}
+
+
+def _contact_or_reply(name):
+    """Contact dhoondho. Na mile / do mil jaayein to seedha jawab (DirectReply)."""
+    import contacts
+    status, found, number = contacts.find(name)
+    if status == "found":
+        return found, number
+    if status == "ambiguous":
+        raise DirectReply(f"Sir, kaunsa {name}: {' ya '.join(found)}?", ok=False)
+    if not contacts.exists():
+        raise DirectReply("Sir, abhi contacts.json file nahi hai. contacts.example.json ko copy karke "
+                          "contacts.json banaiye aur naam-number daaliye.", ok=False)
+    raise DirectReply(f"Sir, '{name}' contacts mein nahi mila. contacts.json mein unka naam aur number "
+                      f"daal dijiye - main number khud nahi banata.", ok=False)
+
+
+def _answer_kind(answer):
+    """Confirm ke jawab ko samjho: 'yes' / 'no' / 'edit' (message badalna hai)."""
+    words = set(re.findall(r"[^\s.,!?।]+", (answer or "").lower()))
+    if not words:
+        return "no"
+    if words & _NO and not words & _EDIT:
+        return "no"
+    if words & _EDIT or (len(words) > 2 and not words <= _YES):
+        return "edit"
+    if words & _YES:
+        return "yes"
+    return "no"
+
+
+def _confirm_message(name, message):
+    """"Mom ko bhejun: '...'? Haan ya nahi" - haan pe message, nahi pe None.
+    "Polite bana do" / "English mein likh do" -> AI se sudhaar ke DOBARA poochho (max 3 baar)."""
+    import brain
+    for _ in range(4):
+        answer = ask_user(f"{name} ko bhejun: '{message}'? Haan ya nahi")
+        kind = _answer_kind(answer)
+        if kind == "yes":
+            return message
+        if kind == "no":
+            return None
+        ui.log("Message sudhaar raha hoon...")
+        message = brain.rewrite_message(message, answer)
+    return None
+
+
+@tool("Sending WhatsApp: {contact}...", needs=MSG_WORDS)
+def send_whatsapp(contact: str, message: str) -> str:
+    """Send a WhatsApp message to a saved contact (name from contacts, e.g. 'Mom', 'Rahul').
+    Krish is ALWAYS asked to confirm first (and can ask to rewrite it). Pass the message
+    exactly as Krish said it. Never invent a phone number."""
+    import contacts
+    name, number = _contact_or_reply(contact)
+    ui.log(f"WhatsApp -> {name} ({contacts.mask(number)})")
+    final = _confirm_message(name, message.strip())
+    if not final:
+        raise DirectReply("Theek hai sir, message nahi bheja.", ok=False)
+    if DRY_RUN:
+        _dry_run(f"send WhatsApp to {name} ({contacts.mask(number)}), {len(final)} characters")
+        raise DirectReply(f"Test mode hai sir, {name} ko message sach mein nahi bheja.")
+    import whatsapp
+    whatsapp.send_message(number, final)
+    import notifications
+    notifications.mark_read(name)
+    raise DirectReply(f"Bhej diya, sir. {name} ko message chala gaya.")
+
+
+@tool("WhatsApp call: {contact}...", needs=CALL_WORDS)
+def whatsapp_call(contact: str, video: bool = False) -> str:
+    """Start a WhatsApp voice call (video=False) or video call (video=True) to a saved contact.
+    Krish is asked to confirm first."""
+    import contacts
+    name, number = _contact_or_reply(contact)
+    kind = "video call" if video else "call"
+    if not confirm(f"Sir, {name} ko WhatsApp {kind} karun?"):
+        raise DirectReply(f"Theek hai sir, {kind} nahi kiya.", ok=False)
+    if DRY_RUN:
+        _dry_run(f"WhatsApp {kind} to {name} ({contacts.mask(number)})")
+        raise DirectReply(f"Test mode hai sir, {name} ko {kind} sach mein nahi lagaya.")
+    import whatsapp
+    whatsapp.call(number, video=bool(video))
+    raise DirectReply(f"{name} ko WhatsApp {kind} laga raha hoon, sir.")
+
+
+@tool("Phone call: {contact}...", needs=CALL_WORDS)
+def phone_call(contact: str) -> str:
+    """Start a normal phone (SIM) call to a saved contact through Windows Phone Link.
+    Use only when Krish says phone call / normal call. Krish is asked to confirm first."""
+    import contacts
+    name, number = _contact_or_reply(contact)
+    if not confirm(f"Sir, {name} ko phone call karun?"):
+        raise DirectReply("Theek hai sir, call nahi kiya.", ok=False)
+    if DRY_RUN:
+        _dry_run(f"Phone Link call to {name} ({contacts.mask(number)})")
+        raise DirectReply(f"Test mode hai sir, {name} ko phone call sach mein nahi kiya.")
+    import whatsapp
+    whatsapp.phone_call(number)
+    raise DirectReply(f"{name} ko Phone Link se call laga raha hoon, sir. Phone Link mein Call button dabana pad sakta hai.")
+
+
+@tool("Ending call...", needs=END_CALL_WORDS)
+def end_call() -> str:
+    """End (hang up) the current WhatsApp call."""
+    if DRY_RUN:
+        _dry_run("click WhatsApp 'End call' button")
+        raise DirectReply("Test mode hai sir, call sach mein nahi kaati.")
+    import whatsapp
+    whatsapp.end_call()
+    raise DirectReply("Call kaat di, sir.")
+
+
+@tool("Reading WhatsApp messages...", needs=READ_WORDS)
+def read_messages() -> str:
+    """Read out the last 5 unread WhatsApp messages (from Windows notifications)."""
+    global private_reply
+    import notifications
+    if notifications.status() == "no access":
+        raise DirectReply("Sir, Windows ne notifications padhne ki permission nahi di. Settings > Privacy & "
+                          "security > Notifications mein 'Let apps access your notifications' ON kijiye.", ok=False)
+    items = notifications.unread(5)
+    if not items:
+        raise DirectReply("Sir, koi naya WhatsApp message nahi hai.")
+    private_reply = True       # Message ka text terminal mein nahi dikhega
+    parts = [f"{i['sender']}: '{i['text']}'" for i in items]
+    head = "Sir, 1 message hai. " if len(items) == 1 else f"Sir, {len(items)} messages hain. "
+    raise DirectReply(head + ". ".join(parts) + ".")
+
+
+# ============================================
 # Saare tools ki list - brain.py ye list Gemini ko deta hai
 # ============================================
 ALL_TOOLS = [
@@ -630,4 +790,5 @@ ALL_TOOLS = [
     get_time_date, system_info, take_screenshot, set_volume, set_mute,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen,
+    send_whatsapp, whatsapp_call, phone_call, end_call, read_messages,
 ]

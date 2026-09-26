@@ -89,18 +89,55 @@ SYSTEM_PROMPT = (
     "friends' names), call save_memory with one short clear sentence. Don't save small talk. "
     "When Krish says to forget something ('bhool jao'), call delete_memory. "
     "When Krish asks about the screen, an error or code on screen, call look_at_screen. "
+    # --- WhatsApp / calls ---
+    "To message someone on WhatsApp call send_whatsapp(contact, message) with the contact name as Krish "
+    "said it and the message in Krish's words; it asks Krish to confirm itself. Use whatsapp_call for "
+    "WhatsApp voice/video calls, phone_call only for a normal phone/SIM call, end_call to hang up, "
+    "read_messages to read unread WhatsApp messages. NEVER invent phone numbers and NEVER send or "
+    "reply to a message unless Krish's current message asks for it. "
     "Your replies are spoken aloud: max 2-3 short sentences, no markdown, no lists, no URLs."
 )
 
 
 def system_prompt():
-    """Rules + Krish ki saved memories. Har request pe naya banta hai, taaki abhi
-    save hui baat bhi agle sawaal mein AI ko pata ho (Gemini aur Groq dono)."""
+    """Rules + Krish ki saved memories (+ aakhri aaya WhatsApp message, reply ke liye).
+    Har request pe naya banta hai (Gemini aur Groq dono)."""
+    prompt = SYSTEM_PROMPT
     facts = memory.all_facts()
-    if not facts:
-        return SYSTEM_PROMPT
-    return (SYSTEM_PROMPT + "\n\nThings you know about Krish (long-term memory, use when relevant):\n"
-            + "\n".join(f"- {f}" for f in facts))
+    if facts:
+        prompt += ("\n\nThings you know about Krish (long-term memory, use when relevant):\n"
+                   + "\n".join(f"- {f}" for f in facts))
+    import notifications
+    if notifications.last_sender:
+        prompt += (f"\n\nLatest incoming WhatsApp message was from '{notifications.last_sender}'. "
+                   "If Krish asks to reply to it, call send_whatsapp with that contact.")
+    return prompt
+
+
+def rewrite_message(message, instruction):
+    """WhatsApp message ko Krish ke kehne pe sudhaaro ("polite bana do", "English mein likh do").
+    Sirf naya message return karta hai. AI na chale to purana message hi."""
+    ask = (f"Rewrite this WhatsApp message as Krish asked. Krish's instruction: \"{instruction}\".\n"
+           f"Message: \"{message}\"\n"
+           "Reply with ONLY the new message text - no quotes, no explanation.")
+    try:
+        if gemini_client and time.time() >= gemini_blocked_until:
+            r = gemini_client.models.generate_content(model=GEMINI_MODEL, contents=ask)
+            if r.text:
+                return _tidy(r.text).strip('"')
+    except Exception:
+        pass
+    try:
+        if groq_client:
+            r = groq_client.chat.completions.create(
+                model=GROQ_MODEL, messages=[{"role": "user", "content": ask}],
+                reasoning_effort=GROQ_REASONING_EFFORT, include_reasoning=False)
+            text = r.choices[0].message.content
+            if text:
+                return _tidy(text).strip('"')
+    except Exception as e:
+        print(f"  (Message rewrite error: {str(e)[:80]})")
+    return message
 
 
 # --- Step 3: Shared conversation history ---

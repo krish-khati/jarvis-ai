@@ -21,6 +21,14 @@ def text_confirm(question):
 tools.confirm = text_confirm
 
 
+def text_ask(question):
+    """WhatsApp message confirm: poora jawab type karo ("haan" / "nahi" / "polite bana do")."""
+    return input(f"JARVIS: {question} ").strip() or None
+
+
+tools.ask_user = text_ask
+
+
 # --- Chat loop ---
 print("JARVIS online hai. Band karne ke liye 'exit' ya 'bye' likho.\n")
 

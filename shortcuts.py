@@ -224,10 +224,81 @@ def _memory_command(command, text, hi):
     return None
 
 
+# ============================================
+# WHATSAPP / CALL commands (bina AI) - asli kaam tools karte hain (confirm + DRY_RUN + lock)
+# ============================================
+_TO = r"(?P<c>[\w .]+?) ko"
+WA_SEND = re.compile(
+    _TO + r" (?:whatsapp (?:pe |par )?)?(?:message |msg |whatsapp )?"
+    r"(?:bhejo|bhej do|send karo|send kar do|likh do|bol do|keh do|bata do)(?:,)? (?:ki |that )?(?P<m>.+)"
+    r"|send (?:a )?(?:whatsapp )?(?:message|msg) to (?P<c2>[\w .]+?) (?:saying|that) (?P<m2>.+)", re.IGNORECASE)
+WA_CALL = re.compile(
+    _TO + r" (?P<w>whatsapp )?(?P<v>video )?(?P<k>call|phone call|phone|audio call|voice call) "
+    r"(?:karo|kar do|lagao|laga do|milao|mila do)"
+    r"|(?P<v2>video )?call (?P<c2>[\w ]+)", re.IGNORECASE)
+WA_END = re.compile(r"(?:call|phone) (?:kaat|kat|kaato|cut|end|band|rakh|disconnect)(?: do| karo| kar do| de)?"
+                    r"|(?:end|cut|hang up)(?: the)? call", re.IGNORECASE)
+WA_READ = re.compile(r"(?:whatsapp )?(?:messages?|msgs?) (?:padho|padh do|sunao|suna do|batao|read karo|check karo)"
+                     r"|(?:read|check)(?: my)?(?: whatsapp)? messages"
+                     r"|koi (?:naya )?(?:whatsapp )?message (?:aaya|hai)(?: kya)?(?: hai)?", re.IGNORECASE)
+WA_REPLY = re.compile(r"(?:(?:haan|ha|han|yes|ok)[, ]+)?(?:reply (?:karo|kar do)|bol do|likh do|keh do|bata do|bhej do)"
+                      r"(?:,)? (?:ki |that )?(?P<m>.+)", re.IGNORECASE)
+
+
+def _raw(command):
+    """Case bacha ke (message ka text jaisa bola waisa), sirf 'jarvis' aur end ka ?.! hatao."""
+    raw = re.sub(r"^\s*(hey\s+)?(jarvis|jervis|jarvi|service)\W*\s*", "", command, flags=re.IGNORECASE)
+    return raw.strip(" .!?।")
+
+
+def _whatsapp_command(command, text):
+    """WhatsApp/call wale seedhe commands. Jawab (text) ya None. Tools DirectReply se jawab dete hain."""
+    import notifications
+    raw = _raw(command)
+
+    if WA_END.fullmatch(raw):
+        return tools.end_call()
+    if WA_READ.fullmatch(raw):
+        return tools.read_messages()
+
+    # "Reply karun?" ke baad: "haan, bol do ki pakka" / "nahi"
+    if notifications.last_sender:
+        m = WA_REPLY.fullmatch(raw)
+        if m and not WA_SEND.fullmatch(raw):
+            notifications.awaiting_reply = False
+            return tools.send_whatsapp(notifications.last_sender, m["m"].strip())
+        if notifications.awaiting_reply:
+            words = set(text.split())
+            if words and words <= YES | {"reply", "karo", "kar", "do"}:
+                return "Kya reply karun, sir? Boliye jaise: 'bol do ki pakka'."
+            notifications.awaiting_reply = False
+            if words & NO and len(words) <= 3:
+                return "Theek hai sir, reply nahi karta."
+
+    m = WA_SEND.fullmatch(raw)
+    if m:
+        contact, message = (m["c"] or m["c2"]).strip(), (m["m"] or m["m2"]).strip()
+        return tools.send_whatsapp(contact, message)
+
+    m = WA_CALL.fullmatch(raw)
+    if m:
+        contact = (m["c"] or m["c2"] or "").strip()
+        kind = (m["k"] or "").lower()
+        if kind.startswith("phone") and not m["w"]:
+            return tools.phone_call(contact)          # "phone karo" / "phone call karo" = normal call
+        return tools.whatsapp_call(contact, video=bool(m["v"] or m["v2"]))
+    return None
+
+
 def handle(command):
     """Simple command ho to khud chala ke jawab (text) do, warna None."""
     text = _clean(command)
     hi = _hinglish(text)
+
+    # --- WhatsApp / calls (tools khud confirm + DRY_RUN + safety lock sambhalte hain) ---
+    reply = _whatsapp_command(command, text)
+    if reply:
+        return reply
 
     # --- Memory commands (sabse pehle - correction/"Sahi hai?" ka jawab yahin) ---
     reply = _memory_command(command, text, hi)

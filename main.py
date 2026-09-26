@@ -19,6 +19,7 @@ import time     # Latency (jawab aane mein kitna time laga) naapne ke liye
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import brain    # Gemini (dimaag)
+import notifications  # WhatsApp ke aaye messages (Windows notifications, sirf RAM mein)
 import tools    # Tools (confirm function yahan set karte hain)
 import ui       # Screen pe status
 import voice    # Sunna aur bolna
@@ -109,6 +110,42 @@ confirm_wait_seconds = 0.0
 CONFIRM_WAIT_SECONDS = 5
 
 
+def voice_ask(question):
+    """Sawaal bolo aur POORA jawab (text) lo - jaise "haan" / "thoda polite bana do".
+    (WhatsApp message confirm ke liye; jawab na mile to None = cancel)"""
+    global confirm_wait_seconds
+    started = time.time()
+    ui.set_state("speaking")
+    voice.speak(question, private=True)     # Sawaal mein message ka text hai - terminal mein nahi
+    ui.set_state("listening")
+    answer = voice.listen_command(wait_seconds=CONFIRM_WAIT_SECONDS + 2)
+    confirm_wait_seconds += time.time() - started
+    if not answer:
+        ui.log("Jawab nahi mila -> cancel")
+        return None
+    print(f"Krish: {answer}")
+    ui.add_message("user", answer)
+    return answer
+
+
+def announce_messages(on_wake=False):
+    """Naye WhatsApp messages batao. Sirf BATATE hain - reply kabhi apne aap nahi.
+    on_wake=True: sleep mein aaye messages ki sirf ginti ("Sir, 3 naye messages hain")."""
+    new = notifications.take_new()
+    if not new:
+        return
+    ui.set_state("speaking")
+    if on_wake or len(new) > 1:
+        voice.speak(f"Sir, {len(new)} naye WhatsApp messages hain. 'Messages padho' boliye." if len(new) > 1
+                    else f"Sir, {new[0]['sender']} ka ek naya message hai. 'Messages padho' boliye.")
+        # Ye abhi padhe nahi gaye - 'messages padho' pe milenge
+        return
+    m = new[0]
+    notifications.mark_read(m["sender"])
+    notifications.awaiting_reply = True          # Agla "haan, bol do ki..." isi ka reply
+    voice.speak(f"Sir, {m['sender']} ka message aaya: '{m['text']}'. Reply karun?", private=True)
+
+
 def voice_confirm(question):
     """Khatarnak kaam se pehle bol ke poochho, jawab suno. True = haan."""
     global confirm_wait_seconds
@@ -153,11 +190,13 @@ def active_mode():
 
     ui.set_state("speaking")
     voice.speak(WAKE_LINE, cache=True)
+    announce_messages(on_wake=True)   # Sleep mein aaye messages: "Sir, 3 naye messages hain"
 
     last_heard = time.time()     # Aakhri baar kab kuch samajh aaya (auto-sleep ke liye)
     pending = None               # Spelling sunte waqt aaya alag command (agli baar chalega)
 
     while True:
+        announce_messages()      # Jaagte hue naya message aaya ho to batao (reply nahi)
         ui.set_state("listening")
         # Utna hi intezaar karo jitna auto-sleep tak bacha hai (max 8s ek baar mein)
         remaining = IDLE_SLEEP_SECONDS - (time.time() - last_heard)
@@ -234,7 +273,9 @@ def active_mode():
         if len(reply) > 350:
             print(f"(Poora jawab: {reply})")
         ui.set_state("speaking")
-        voice.speak(short_for_speech(reply))
+        # WhatsApp message padh ke sunaya ho to terminal mein text mat chhapo
+        private, tools.private_reply = tools.private_reply, False
+        voice.speak(short_for_speech(reply) if not private else reply, private=private)
 
         # --- Latency: sunne ke baad awaaz shuru hone tak kitna time laga ---
         total = command_stt + brain_seconds + voice.last_tts_seconds
@@ -247,8 +288,11 @@ def active_mode():
 
 def voice_loop():
     """Awaaz wala loop: sleep mode <-> active mode. (UI ke saath alag thread mein chalta hai)"""
-    # Tools ko batao ki confirmation bol ke leni hai
+    # Tools ko batao ki confirmation / sawaal bol ke poochne hain
     tools.confirm = voice_confirm
+    tools.ask_user = voice_ask
+    if notifications.status() == "not started":
+        notifications.start()     # WhatsApp notifications padhna (sirf RAM mein)
 
     while True:
         # --- Sleep mode: chupchap wake word suno ---
@@ -289,20 +333,30 @@ class Api:
         with brain_lock:
             # Type karke poocha hai to "Sir, pakka?" bhi screen pe poocho, bol ke nahi
             old_confirm, tools.confirm = tools.confirm, ui_confirm
+            old_ask, tools.ask_user = tools.ask_user, ui_prompt
             try:
                 reply = brain.ask(text) or ""
             except Exception as e:
                 print(f"(Brain error: {e})")
                 reply = "Sorry sir, abhi kuch gadbad ho gayi."
             finally:
-                tools.confirm = old_confirm
-        print(f"JARVIS (typed reply): {reply}")
+                tools.confirm, tools.ask_user = old_confirm, old_ask
+        private, tools.private_reply = tools.private_reply, False
+        print("JARVIS (typed reply): [private]" if private else f"JARVIS (typed reply): {reply}")
         ui.log(f"Brain: {brain.last_brain}")
         return reply
 
     def hide(self):
         """Esc dabane pe window chhupao (JARVIS background mein chalta rahe)."""
         ui.hide_window()
+
+
+def ui_prompt(question):
+    """UI mein prompt() box - jawab type karo (jaise "haan" ya "polite bana do"). Cancel = None."""
+    try:
+        return ui.window.evaluate_js(f"prompt({json.dumps(question, ensure_ascii=False)}, 'haan')")
+    except Exception:
+        return None
 
 
 def ui_confirm(question):

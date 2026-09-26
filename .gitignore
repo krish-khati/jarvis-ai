@@ -14,5 +14,8 @@ voice_cache/
 memory.json
 memory.json.broken
 
+# Contacts (naam + phone number) - personal, GitHub pe nahi
+contacts.json
+
 # Python cache files
 __pycache__/

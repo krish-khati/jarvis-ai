@@ -387,13 +387,14 @@ def _loudness_envelope(path):
         return []
 
 
-def speak(text, cache=False, show=True):
+def speak(text, cache=False, show=True, private=False):
     """Text ko awaaz mein bolta hai (bolna khatam hone tak rukta hai).
     cache=True: fixed lines (jaise "Yes sir...") ek baar banake save ho jaati
     hain, agli baar se wahi file chalti hai - ElevenLabs ke characters bachte hain.
-    show=False: UI chat mein mat daalo (jaise wake line - wo jarvis.wake() khud dikhata hai)."""
+    show=False: UI chat mein mat daalo.
+    private=True: terminal mein text mat chhapo (jaise aaya hua WhatsApp message) - sirf awaaz + UI."""
     global last_tts_seconds
-    print(f"JARVIS: {text}")
+    print("JARVIS: [private - WhatsApp message, terminal mein nahi dikhaya]" if private else f"JARVIS: {text}")
     if show:
         ui.add_message("ai", text)     # UI chat mein JARVIS ki line
     started = time.time()     # Latency: awaaz banane mein kitna laga
