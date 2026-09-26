@@ -22,3 +22,4 @@ mss
 
 # 3D UI window
 pywebview
+pystray

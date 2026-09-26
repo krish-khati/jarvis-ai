@@ -152,8 +152,7 @@ def active_mode():
     global confirm_wait_seconds
 
     ui.set_state("speaking")
-    # show=False: ye line UI mein jarvis.wake(WAKE_LINE) pehle hi dikha chuka hai
-    voice.speak(WAKE_LINE, cache=True, show=False)
+    voice.speak(WAKE_LINE, cache=True)
 
     last_heard = time.time()     # Aakhri baar kab kuch samajh aaya (auto-sleep ke liye)
     pending = None               # Spelling sunte waqt aaya alag command (agli baar chalega)
@@ -254,6 +253,7 @@ def voice_loop():
     while True:
         # --- Sleep mode: chupchap wake word suno ---
         ui.set_state("sleeping")
+        ui.hide_window()  # Sleep mein window chhupi rahe (JARVIS tray mein chalta hai)
         print("\n[Sleep mode] 'Hey Jarvis' ya 'Jarvis wake up' bolo "
               "('Jarvis shutdown' = band)")
         if voice.wait_for_wake_word() == "shutdown":
@@ -261,7 +261,7 @@ def voice_loop():
                 break
             continue      # "Nahi" bola -> wapas sleep mode
 
-        ui.wake(WAKE_LINE)   # UI mein shockwave + yahi line chat mein (HTML ki apni greeting nahi)
+        ui.wake()         # Window saamne + flash + panels slide-in
 
         # --- Active mode ---
         if active_mode() == "shutdown":
@@ -300,6 +300,10 @@ class Api:
         ui.log(f"Brain: {brain.last_brain}")
         return reply
 
+    def hide(self):
+        """Esc dabane pe window chhupao (JARVIS background mein chalta rahe)."""
+        ui.hide_window()
+
 
 def ui_confirm(question):
     """UI mein browser wala confirm() dialog (OK = haan, Cancel = nahi)."""
@@ -310,15 +314,54 @@ def ui_confirm(question):
 
 
 def stats_loop():
-    """Har 2 second CPU, RAM, battery UI ko bhejo."""
+    """Har 2 second CPU, RAM, battery, disk, network UI ko bhejo."""
     import psutil
     psutil.cpu_percent(interval=None)          # Pehli reading hamesha 0 aati hai - chhod do
+    drive = os.path.splitdrive(os.path.abspath(__file__))[0] + os.sep   # Jis drive pe JARVIS hai
+    last, last_t = psutil.net_io_counters(), time.time()
     while True:
         time.sleep(2)
         battery = psutil.sensors_battery()
+        # Network: pichle 2 second mein kitne bytes aaye+gaye -> MB/s
+        now, now_t = psutil.net_io_counters(), time.time()
+        moved = (now.bytes_recv - last.bytes_recv) + (now.bytes_sent - last.bytes_sent)
+        net_mbps = round(moved / max(now_t - last_t, 0.1) / 1e6, 2)
+        last, last_t = now, now_t
+        try:
+            disk = round(psutil.disk_usage(drive).percent)
+        except Exception:
+            disk = None
         ui.set_stats(round(psutil.cpu_percent(interval=None)),
                      round(psutil.virtual_memory().percent),
-                     round(battery.percent) if battery else None)
+                     round(battery.percent) if battery else None,
+                     disk, net_mbps)
+
+
+# ============================================
+# System tray icon (pystray): Show Jarvis / Quit
+# ============================================
+def _tray_image():
+    """Tray ke liye chhota gol neela icon (koi file nahi - yahin banta hai)."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((4, 4, 60, 60), outline=(31, 169, 255, 255), width=5)
+    d.ellipse((20, 20, 44, 44), fill=(143, 227, 255, 255))
+    return img
+
+
+def start_tray():
+    """Tray icon alag thread mein. 'Show Jarvis' = window dikhao, 'Quit' = sab band."""
+    import pystray
+    icon = pystray.Icon(
+        "jarvis", _tray_image(), "J.A.R.V.I.S",
+        menu=pystray.Menu(
+            pystray.MenuItem("Show Jarvis", lambda: ui.show_window(), default=True),
+            pystray.MenuItem("Quit", lambda: exit_now()),
+        ),
+    )
+    threading.Thread(target=icon.run, daemon=True, name="tray").start()
+    return icon
 
 
 def exit_now():
@@ -332,9 +375,13 @@ def start_with_ui():
     """Window kholo; voice loop + stats alag threads mein chalao."""
     import webview
 
+    # Frameless + fullscreen + shuru mein chhupi. "Jarvis wake up" pe saamne aati hai.
     ui.window = webview.create_window("J.A.R.V.I.S", UI_FILE, js_api=Api(),
-                                      fullscreen=True, background_color="#000000")
-    ui.window.events.closed += exit_now        # Window band -> JARVIS band
+                                      fullscreen=True, frameless=True, hidden=True,
+                                      background_color="#020a14")
+    ui.window.events.closed += exit_now        # Window sach mein band (Alt+F4) -> JARVIS band
+    start_tray()
+    print("JARVIS background mein chal raha hai (tray icon: Show Jarvis / Quit)")
 
     def background():
         ui.window.events.loaded.wait(20)        # HTML load hone tak ruko

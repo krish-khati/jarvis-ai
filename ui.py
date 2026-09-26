@@ -4,10 +4,12 @@
 #   pywebview) khuli hai to wahi baat window.jarvis ke functions ko bhi jaati hai:
 #     set_state -> jarvis.setState(...) / jarvis.sleep()
 #     log       -> jarvis.log(...)
-#     wake      -> jarvis.wake()
+#     wake      -> window saamne + jarvis.wake()
 #     add_message -> jarvis.addMessage('user'/'ai', text)
-#     set_stats -> jarvis.setStats(cpu, ram, battery)
-#     set_level -> jarvis.setLevel(0..1)   (bolte waqt orb naache)
+#     set_stats -> jarvis.setStats(cpu, ram, battery, disk, net_MBps)
+#     set_weather -> jarvis.setWeather(city, temp, desc)
+#     action    -> jarvis.action(id, title, detail, 'running'/'done'/'failed')
+#     set_level -> jarvis.setLevel(0..1)   (bolte waqt waveform naache)
 # ============================================
 
 import json         # Python ki value ko JavaScript mein bhejne layak text banana
@@ -55,13 +57,31 @@ def log(message):
     _js("log", message)
 
 
-def wake(text=None):
-    """Wake word suna - UI mein shockwave/animation. text diya to UI wahi line chat mein
-    dikhata hai (warna HTML apni "Good evening, Krish..." wali line daalta hai)."""
-    if text:
-        _js("wake", text)
-    else:
-        _js("wake")
+def wake():
+    """Wake word suna - window saamne lao, phir UI mein flash + panels slide-in."""
+    show_window()
+    _js("wake")
+
+
+def show_window():
+    """Chhupi window ko saamne lao (fullscreen)."""
+    if window is None:
+        return
+    try:
+        window.show()
+        window.restore()          # Minimize ho to wapas
+    except Exception:
+        pass
+
+
+def hide_window():
+    """Window chhupao - JARVIS background (tray) mein chalta rehta hai."""
+    if window is None:
+        return
+    try:
+        window.hide()
+    except Exception:
+        pass
 
 
 def add_message(role, text):
@@ -69,9 +89,19 @@ def add_message(role, text):
     _js("addMessage", role, text)
 
 
-def set_stats(cpu, ram, battery):
-    """CPU %, RAM %, battery % (desktop pe battery None)."""
-    _js("setStats", cpu, ram, battery)
+def set_stats(cpu, ram, battery, disk=None, net_mbps=None):
+    """CPU %, RAM %, battery % (desktop pe None), disk %, network MB/s."""
+    _js("setStats", cpu, ram, battery, disk, net_mbps)
+
+
+def set_weather(city, temp, desc):
+    """Weather panel: shahar, temperature (°C), description."""
+    _js("setWeather", city, temp, desc)
+
+
+def action(action_id, title, detail, status):
+    """Activity panel mein kaam dikhao/update karo. status = 'running' / 'done' / 'failed'."""
+    _js("action", action_id, title, detail, status)
 
 
 def set_level(level):

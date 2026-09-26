@@ -1,565 +1,762 @@
-/<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>J.A.R.V.I.S</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --void: #010409;
-    --cyan: #2de2ff;
-    --cyan-glow: rgba(45, 226, 255, 0.55);
-    --hot: #ff5a1f;
-    --hot-glow: rgba(255, 90, 31, 0.6);
-    --gold: #ffc23d;
-    --text: #d7f6ff;
-    --panel: rgba(3, 18, 30, 0.55);
-    --line: rgba(45, 226, 255, 0.3);
-    box-sizing: border-box;
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --void: #010409; } }
-  :root[data-theme="dark"] { --void: #010409; }
-  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body {
-    background: var(--void);
-    color: var(--text);
-    font-family: "Rajdhani", "Segoe UI", system-ui, sans-serif;
-    overflow: hidden;
-  }
+/* =====================================================================
+   JARVIS HUD - ek hi file (CSS + JS). Python (pywebview) window.jarvis
+   ke functions bulata hai; command box window.pywebview.api.ask() bulata hai.
+   ===================================================================== */
+:root {
+  --bg: #020a14;
+  --blue: #1fa9ff;
+  --cyan: #8fe3ff;
+  --deep: #0e4a72;
+  --text: #cfeeff;
+  --amber: #ffb03a;
+  --fail: #ff5d6c;
+  --panel: rgba(8, 36, 62, 0.42);
+  --line: rgba(31, 169, 255, 0.32);
+  --glow: rgba(31, 169, 255, 0.55);
+  --cut: 14px;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Chakra Petch", "Segoe UI", sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
 
-  /* ---------- Background layers ---------- */
-  #scene { position: fixed; inset: 0; z-index: 1; transition: opacity 1.2s ease, filter 1.2s ease; }
-  .bg {
-    position: fixed; inset: 0; z-index: 0; pointer-events: none;
-    background:
-      radial-gradient(circle at 50% 42%, rgba(45,226,255,0.14), transparent 45%),
-      radial-gradient(circle at 50% 42%, rgba(255,90,31,0.07), transparent 65%);
-    transition: opacity 1s;
-  }
-  .hex {
-    position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.16;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='98'%3E%3Cpath d='M28 66 0 50V16L28 0l28 16v34zM28 98 0 82' fill='none' stroke='%232de2ff' stroke-width='0.6'/%3E%3C/svg%3E");
-    mask-image: radial-gradient(circle at 50% 45%, transparent 18%, #000 75%);
-    -webkit-mask-image: radial-gradient(circle at 50% 45%, transparent 18%, #000 75%);
-    transition: opacity 1s;
-  }
-  .scan {
-    position: fixed; left: 0; right: 0; height: 140px; z-index: 2; pointer-events: none;
-    background: linear-gradient(to bottom, transparent, rgba(45,226,255,0.07), transparent);
-    animation: scan 6s linear infinite;
-  }
-  @keyframes scan { from { top: -140px; } to { top: 100%; } }
-  .vignette { position: fixed; inset: 0; z-index: 2; pointer-events: none; box-shadow: inset 0 0 180px 40px #000; }
+/* ---------- Background: grid + beech mein glow ---------- */
+.bg-grid {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(31,169,255,0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31,169,255,0.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at 50% 45%, #000 30%, transparent 85%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 45%, #000 30%, transparent 85%);
+}
+.bg-glow {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 44%, rgba(31,169,255,0.18), transparent 42%),
+              radial-gradient(circle at 50% 44%, rgba(14,74,114,0.35), transparent 70%);
+}
+.vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none; box-shadow: inset 0 0 200px 60px #000; }
 
-  /* ---------- HUD shell ---------- */
-  .hud { position: fixed; z-index: 4; transition: opacity 0.6s ease, transform 0.8s cubic-bezier(.2,.9,.2,1.2); }
-  .top { top: calc(16px + env(safe-area-inset-top, 0px)); left: 24px; right: 24px; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
-  .left { left: 24px; top: 50%; transform: translateY(-46%); width: 230px; }
-  .right { right: 24px; top: 50%; transform: translateY(-46%); width: 230px; }
+/* ---------- Layout ---------- */
+.hud {
+  position: relative; z-index: 2; height: 100vh;
+  display: grid;
+  grid-template-rows: 64px 1fr 104px;
+  grid-template-columns: minmax(260px, 330px) 1fr minmax(270px, 350px);
+  grid-template-areas: "top top top" "left center right" "dock dock dock";
+  gap: 14px; padding: 14px 20px;
+  transition: filter 0.9s ease, opacity 0.9s ease;
+}
+.topbar { grid-area: top; }
+.col-left { grid-area: left; }
+.center { grid-area: center; }
+.col-right { grid-area: right; }
+.dock { grid-area: dock; }
+.col-left, .col-right { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 
-  .brand {
-    position: relative; font-family: "Orbitron", sans-serif; font-weight: 900;
-    font-size: 1.9rem; letter-spacing: 0.32em; color: var(--cyan);
-    text-shadow: 0 0 14px var(--cyan-glow), 0 0 40px var(--cyan-glow);
-  }
-  .brand::before, .brand::after { content: attr(data-t); position: absolute; inset: 0; opacity: 0; }
-  body.waking .brand::before { color: var(--hot); animation: glitch 0.35s steps(2) 4; opacity: 1; }
-  body.waking .brand::after  { color: #fff; animation: glitch 0.35s steps(2) reverse 4; opacity: 1; }
-  @keyframes glitch {
-    0% { clip-path: inset(10% 0 70% 0); transform: translate(-6px, 0); }
-    50% { clip-path: inset(60% 0 10% 0); transform: translate(6px, 0); }
-    100% { clip-path: inset(30% 0 40% 0); transform: translate(-3px, 0); }
-  }
-  .tag { font-size: 0.95rem; letter-spacing: 0.08em; opacity: 0.7; margin-top: 2px; }
-  .status {
-    display: inline-flex; align-items: center; gap: 10px; margin-top: 12px;
-    padding: 5px 14px 5px 10px; border: 1px solid var(--line); background: var(--panel);
-    font-weight: 700; font-size: 1.05rem;
-    clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
-  }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); animation: blink 1.2s infinite; }
-  body[data-state="thinking"] .dot { background: var(--hot); box-shadow: 0 0 12px var(--hot); }
-  @keyframes blink { 50% { opacity: 0.25; } }
-  .clock { font-family: "Orbitron", sans-serif; font-weight: 700; font-size: 2.3rem; color: var(--cyan); text-shadow: 0 0 14px var(--cyan-glow); text-align: right; }
-  .date { text-align: right; opacity: 0.75; font-size: 1.05rem; }
+/* ---------- Panel (kate kone + upar-left glowing line) ---------- */
+.panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 14px 16px 16px;
+  clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.panel::before {
+  content: ""; position: absolute; left: calc(var(--cut) + 4px); top: 0; width: 46px; height: 2px;
+  background: var(--cyan); box-shadow: 0 0 10px var(--cyan);
+}
+.panel h3 {
+  margin: 0 0 12px; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.24em;
+  color: var(--blue); text-transform: uppercase; display: flex; justify-content: space-between;
+}
+.panel h3 small { color: rgba(143,227,255,0.55); font-weight: 500; letter-spacing: 0.12em; }
 
-  .panel {
-    position: relative; background: var(--panel); border: 1px solid var(--line);
-    padding: 14px 16px; margin-bottom: 14px;
-    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  }
-  .panel::before { content: ""; position: absolute; left: 0; top: 0; width: 38px; height: 2px; background: var(--hot); box-shadow: 0 0 8px var(--hot); }
-  .panel h3 { margin: 0 0 10px; font-family: "Orbitron", sans-serif; font-size: 0.8rem; letter-spacing: 0.2em; color: var(--cyan); font-weight: 700; }
-  .stat { margin-bottom: 11px; }
-  .stat-row { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 4px; }
-  .stat-row span:last-child { font-family: "Orbitron", sans-serif; font-size: 0.85rem; color: var(--cyan); }
-  .segs { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: 8px; }
-  .segs i { background: rgba(45,226,255,0.12); transition: background 0.3s, box-shadow 0.3s; }
-  .segs i.on { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
-  .segs i.on.hot { background: var(--hot); box-shadow: 0 0 6px var(--hot); }
-  #radar { display: block; width: 100%; aspect-ratio: 1; }
-  .log { font-size: 0.98rem; line-height: 1.55; min-height: 9em; }
-  .log div { opacity: 0.55; }
-  .log div:first-child { opacity: 1; color: var(--cyan); }
-  .mods { list-style: none; margin: 0; padding: 0; font-weight: 600; }
-  .mods li { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed rgba(45,226,255,0.15); }
-  .mods li span:last-child { color: var(--cyan); font-family: "Orbitron", sans-serif; font-size: 0.72rem; letter-spacing: 0.1em; align-self: center; }
+/* ---------- Top bar ---------- */
+.topbar { display: flex; align-items: center; gap: 22px; }
+.brand {
+  font-size: 1.7rem; font-weight: 700; letter-spacing: 0.38em; color: var(--cyan);
+  text-shadow: 0 0 12px var(--glow), 0 0 34px var(--glow);
+  white-space: nowrap;
+}
+.pill {
+  display: inline-flex; align-items: center; gap: 9px; padding: 5px 16px 5px 12px;
+  border: 1px solid var(--line); background: var(--panel); font-weight: 600; font-size: 0.95rem;
+  letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 10px var(--blue); animation: blink 1.4s infinite; }
+body[data-state="thinking"] .pill .dot { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+body[data-state="thinking"] .pill { color: var(--amber); border-color: rgba(255,176,58,0.45); }
+body[data-state="sleeping"] .pill .dot { background: var(--deep); box-shadow: none; animation: none; }
+@keyframes blink { 50% { opacity: 0.3; } }
+.ruler { flex: 1; height: 16px; min-width: 60px; position: relative; overflow: hidden; }
+.ruler::before {
+  content: ""; position: absolute; left: 0; right: 0;
+  background: repeating-linear-gradient(90deg, rgba(31,169,255,0.55) 0 1px, transparent 1px 10px);
+  mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+  height: 7px; top: 5px;
+}
+.ruler::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 12px; height: 1px; background: rgba(31,169,255,0.35);
+}
+.online { font-size: 0.85rem; letter-spacing: 0.22em; color: var(--cyan); white-space: nowrap; }
+.online b { color: var(--blue); }
 
-  #wave { position: fixed; z-index: 3; left: 50%; transform: translateX(-50%); width: min(520px, 86vw); height: 60px; transition: opacity 0.6s; }
+/* ---------- Clock panel ---------- */
+.clock-wrap { display: flex; align-items: center; gap: 16px; }
+.date-ring { width: 92px; height: 92px; flex: none; }
+.date-ring .num { font-size: 28px; font-weight: 700; fill: var(--cyan); }
+.date-ring .mon { font-size: 11px; font-weight: 600; fill: var(--blue); letter-spacing: 3px; }
+.time { font-size: 2.5rem; font-weight: 700; color: var(--cyan); line-height: 1; text-shadow: 0 0 14px var(--glow); }
+.time small { font-size: 1.1rem; color: var(--blue); margin-left: 4px; }
+.fulldate { margin-top: 6px; font-size: 0.92rem; opacity: 0.75; }
 
-  /* Chat */
-  .chat {
-    left: 50%; transform: translateX(-50%);
-    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
-    width: min(700px, calc(100% - 28px));
-    background: var(--panel); border: 1px solid var(--line);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
-  }
-  .messages { max-height: 22vh; overflow-y: auto; padding: 12px 18px 4px; font-size: 1.12rem; line-height: 1.45; }
-  .msg { margin-bottom: 8px; }
-  .msg b { font-family: "Orbitron", sans-serif; font-size: 0.7rem; letter-spacing: 0.18em; margin-right: 10px; }
-  .msg.user b { color: var(--hot); }
-  .msg.ai b { color: var(--cyan); }
-  .input-row { display: flex; border-top: 1px solid var(--line); }
-  .input-row input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 1.1rem; padding: 12px 18px; outline: none; }
-  .input-row input::placeholder { color: rgba(45,226,255,0.45); }
-  .input-row button { background: transparent; border: 0; border-left: 1px solid var(--line); color: var(--cyan); font-family: "Orbitron", sans-serif; font-size: 0.78rem; letter-spacing: 0.18em; padding: 0 20px; cursor: pointer; }
-  .input-row button:hover { background: rgba(45,226,255,0.12); }
-  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+/* ---------- System gauges ---------- */
+.gauges { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center; }
+.gauge svg { width: 100%; max-width: 86px; height: auto; }
+.gauge .val { font-size: 17px; font-weight: 700; fill: var(--cyan); }
+.gauge .lbl { font-size: 0.72rem; letter-spacing: 0.18em; color: var(--blue); margin-top: 2px; }
+.bars { margin-top: 12px; display: grid; gap: 9px; }
+.bar-row { display: grid; grid-template-columns: 44px 1fr 74px; align-items: center; gap: 8px; font-size: 0.8rem; }
+.bar-row span:first-child { letter-spacing: 0.14em; color: var(--blue); }
+.bar-row span:last-child { text-align: right; color: var(--cyan); font-weight: 600; }
+.segs { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; height: 8px; }
+.segs i { background: rgba(31,169,255,0.12); transition: background 0.4s; }
+.segs i.on { background: var(--blue); box-shadow: 0 0 5px var(--blue); }
 
-  /* ---------- Sleep screen ---------- */
-  #sleep {
-    position: fixed; inset: 0; z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
-    pointer-events: none; opacity: 0; transition: opacity 0.8s ease;
-  }
-  .ember { width: 14px; height: 14px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 20px 6px var(--cyan-glow); animation: breathe 3.2s ease-in-out infinite; }
-  @keyframes breathe { 50% { transform: scale(0.55); opacity: 0.35; } }
-  .sleep-hint { font-family: "Orbitron", sans-serif; letter-spacing: 0.3em; font-size: 0.85rem; color: rgba(45,226,255,0.55); }
-  body.sleep #sleep { opacity: 1; }
-  body.sleep #scene { opacity: 0.12; filter: blur(3px); }
-  body.sleep .bg, body.sleep .hex, body.sleep .scan { opacity: 0; }
-  body.sleep .hud, body.sleep #wave { opacity: 0; pointer-events: none; }
-  body.sleep .top { transform: translateY(-60px); }
-  body.sleep .left { transform: translate(-120%, -46%); }
-  body.sleep .right { transform: translate(120%, -46%); }
-  body.sleep .chat { transform: translate(-50%, 140%); }
+/* ---------- Activity ---------- */
+.activity { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.acts { list-style: none; margin: 0; padding: 0; overflow: hidden; flex: 1; }
+.acts li {
+  display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: start;
+  padding: 7px 0; border-bottom: 1px dashed rgba(31,169,255,0.16); font-size: 0.88rem;
+  animation: fadein 0.35s ease;
+}
+.acts li > div { min-width: 0; }
+.acts .st { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--blue); }
+.acts .running .st { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); animation: blink 0.8s infinite; }
+.acts .failed .st { background: var(--fail); box-shadow: 0 0 6px var(--fail); }
+.acts .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acts .d { opacity: 0.6; font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acts .tag { font-size: 0.68rem; letter-spacing: 0.14em; color: var(--blue); margin-top: 3px; }
+.acts .running .tag { color: var(--cyan); }
+.acts .failed .tag { color: var(--fail); }
+.acts .empty { display: block; border: 0; opacity: 0.4; font-size: 0.85rem; }
+@keyframes fadein { from { opacity: 0; transform: translateY(4px); } }
 
-  /* ---------- Wake FX ---------- */
-  #flash { position: fixed; inset: 0; z-index: 7; background: #fff; opacity: 0; pointer-events: none; }
-  body.waking #flash { animation: flash 0.7s ease-out; }
-  @keyframes flash { 0% { opacity: 0.9; } 100% { opacity: 0; } }
-  .shock { position: fixed; left: 50%; top: 42%; z-index: 5; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 3px solid var(--cyan); box-shadow: 0 0 30px var(--cyan), inset 0 0 30px var(--cyan); opacity: 0; pointer-events: none; }
-  .shock.b { border-color: var(--hot); box-shadow: 0 0 30px var(--hot), inset 0 0 30px var(--hot); }
-  body.waking .shock { animation: shock 1.3s cubic-bezier(.1,.7,.2,1) forwards; }
-  body.waking .shock.b { animation-delay: 0.18s; }
-  body.waking .shock.c { animation-delay: 0.36s; }
-  @keyframes shock { 0% { transform: scale(0.2); opacity: 1; } 100% { transform: scale(60); opacity: 0; } }
-  body.waking { animation: shake 0.5s; }
-  @keyframes shake { 20% { transform: translate(-6px, 4px); } 40% { transform: translate(5px, -4px); } 60% { transform: translate(-3px, 2px); } 80% { transform: translate(2px, -1px); } }
+/* ---------- Center dial ---------- */
+.center { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; min-width: 0; }
+.dial {
+  position: relative;
+  width: min(56vh, 44vw, 620px); aspect-ratio: 1;
+  flex: none;
+}
+.dial svg, .dial canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.dial svg .spin { transform-box: view-box; transform-origin: 300px 300px; }
+.r-cw-slow   { animation: spin 90s linear infinite; }
+.r-ccw       { animation: spin 40s linear infinite reverse; }
+.r-cw        { animation: spin 22s linear infinite; }
+.r-ccw-fast  { animation: spin 12s linear infinite reverse; }
+@keyframes spin { to { transform: rotate(360deg); } }
+body[data-state="thinking"] .r-cw, body[data-state="thinking"] .r-ccw-fast { animation-duration: 5s; }
+.dial-core { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.dial-core .name {
+  font-size: clamp(1.6rem, 3.6vh, 2.6rem); font-weight: 700; letter-spacing: 0.3em; margin-left: 0.3em;
+  color: var(--cyan); text-shadow: 0 0 14px var(--glow), 0 0 40px var(--glow);
+}
+.dial-core .state { margin-top: 6px; font-size: 0.85rem; letter-spacing: 0.3em; color: var(--blue); text-transform: uppercase; }
+body[data-state="thinking"] .dial-core .state { color: var(--amber); }
 
-  .preview-hint { position: fixed; z-index: 8; right: 16px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); font-size: 0.85rem; opacity: 0.45; pointer-events: none; }
-  .preview-hint kbd { font-family: "Orbitron", sans-serif; font-size: 0.7rem; border: 1px solid var(--line); padding: 1px 5px; }
+.caption {
+  margin-top: 16px; max-width: min(820px, 100%); min-height: 3.2em; text-align: center;
+  font-size: clamp(1.05rem, 2.2vh, 1.35rem); line-height: 1.5; font-weight: 500;
+}
+.caption .user { color: var(--amber); }
+.caption .cursor { display: inline-block; width: 0.5em; height: 1em; margin-left: 2px; vertical-align: -0.12em; background: var(--cyan); animation: blink 0.9s infinite; }
+.note { margin-top: 6px; min-height: 1.3em; font-size: 0.85rem; letter-spacing: 0.14em; color: rgba(143,227,255,0.6); text-transform: uppercase; }
 
-  @media (max-width: 900px) {
-    .left, .right { display: none; }
-    .clock { font-size: 1.6rem; }
-    .brand { font-size: 1.3rem; }
-    .tag { display: none; }
-    .preview-hint { display: none; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .scan, .dot, .ember { animation: none; }
-    body.waking, body.waking #flash, body.waking .shock { animation: none; }
-  }
+/* ---------- Weather ---------- */
+.weather { display: flex; align-items: center; gap: 16px; }
+.weather svg { width: 104px; height: 104px; flex: none; }
+.weather .temp { font-size: 30px; font-weight: 700; fill: var(--cyan); }
+.weather .unit { font-size: 11px; fill: var(--blue); letter-spacing: 2px; }
+.weather .city { font-size: 1.25rem; font-weight: 700; color: var(--cyan); }
+.weather .desc { opacity: 0.75; margin-top: 2px; }
+.weather .upd { margin-top: 6px; font-size: 0.72rem; letter-spacing: 0.14em; color: var(--blue); }
+
+/* ---------- Conversation ---------- */
+.convo { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.msgs { flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px; scrollbar-width: thin; scrollbar-color: var(--deep) transparent; user-select: text; }
+.msg { margin-bottom: 10px; font-size: 0.95rem; line-height: 1.4; animation: fadein 0.3s ease; }
+.msg b { display: block; font-size: 0.66rem; letter-spacing: 0.22em; margin-bottom: 1px; }
+.msg.ai b { color: var(--blue); }
+.msg.user b { color: var(--amber); }
+.msg.user span { color: var(--amber); }
+
+/* ---------- Dock ---------- */
+.dock { display: flex; align-items: center; justify-content: center; gap: 14px; padding-bottom: 14px; }
+.dock-btns { display: flex; gap: 14px; }
+.btn {
+  width: 58px; height: 58px; border-radius: 50%; flex: none;
+  border: 1px solid var(--line); background: radial-gradient(circle, rgba(31,169,255,0.18), rgba(8,36,62,0.6) 70%);
+  color: var(--cyan); display: grid; place-items: center; cursor: pointer; position: relative;
+  box-shadow: 0 0 14px rgba(31,169,255,0.25), inset 0 0 12px rgba(31,169,255,0.2);
+  transition: transform 0.15s, box-shadow 0.2s;
+}
+.btn:hover { box-shadow: 0 0 22px rgba(31,169,255,0.6), inset 0 0 14px rgba(31,169,255,0.35); transform: translateY(-2px); }
+.btn:active { transform: scale(0.94); }
+.btn svg { width: 24px; height: 24px; }
+.btn span {
+  position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+  font-size: 0.62rem; letter-spacing: 0.14em; color: var(--blue); white-space: nowrap; text-transform: uppercase;
+}
+.cmd {
+  display: flex; flex: 0 1 560px; min-width: 200px; height: 52px; margin: 0 8px;
+  border: 1px solid var(--line); background: var(--panel);
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+}
+.cmd input {
+  flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--text);
+  font: inherit; font-size: 1.05rem; padding: 0 18px; user-select: text;
+}
+.cmd input::placeholder { color: rgba(143,227,255,0.4); }
+.cmd button {
+  border: 0; border-left: 1px solid var(--line); background: rgba(31,169,255,0.12); color: var(--cyan);
+  font: inherit; font-weight: 700; letter-spacing: 0.2em; padding: 0 22px; cursor: pointer;
+}
+.cmd button:hover { background: rgba(31,169,255,0.28); }
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* ---------- Sleep ---------- */
+.sleep-msg {
+  position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+  opacity: 0; pointer-events: none; transition: opacity 0.8s ease;
+}
+.sleep-msg .ember { width: 12px; height: 12px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 22px 6px var(--glow); animation: breathe 3s ease-in-out infinite; }
+.sleep-msg p { margin: 0; font-size: 1.1rem; letter-spacing: 0.3em; color: rgba(143,227,255,0.75); }
+@keyframes breathe { 50% { transform: scale(0.5); opacity: 0.35; } }
+body.sleep .hud { filter: blur(7px) brightness(0.45); opacity: 0.45; }
+body.sleep .sleep-msg { opacity: 1; }
+
+/* ---------- Wake: flash + slide-in ---------- */
+.flash { position: fixed; inset: 0; z-index: 6; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle at 50% 45%, rgba(143,227,255,0.95), rgba(31,169,255,0.5) 40%, transparent 75%); }
+body.waking .flash { animation: flash 0.8s ease-out; }
+@keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+.col-left, .col-right, .dock, .topbar, .center { transition: transform 0.8s cubic-bezier(.2,.9,.25,1.1), opacity 0.7s ease; }
+body.sleep .col-left { transform: translateX(-60px); opacity: 0; }
+body.sleep .col-right { transform: translateX(60px); opacity: 0; }
+body.sleep .dock { transform: translateY(60px); opacity: 0; }
+body.sleep .topbar { transform: translateY(-30px); opacity: 0.4; }
+body.sleep .center { transform: scale(0.94); }
+
+/* ---------- Chhoti screen: side columns chhupao ---------- */
+@media (max-width: 1000px) {
+  .hud { grid-template-columns: 1fr; grid-template-areas: "top" "center" "dock"; grid-template-rows: 56px 1fr auto; }
+  .col-left, .col-right { display: none; }
+  .dial { width: min(50vh, 84vw); }
+  .ruler, .online { display: none; }
+  .brand { font-size: 1.3rem; }
+  .dock { flex-wrap: wrap; gap: 10px; }
+  .cmd { order: -1; flex-basis: 100%; margin: 0; }
+  .dock-btns { gap: 10px; }
+  .btn { width: 46px; height: 46px; }
+  .btn span { display: none; }
+}
+
+/* Sirf browser preview (#preview) ke screenshot ke liye - transitions turant */
+body.snap, body.snap * { transition: none !important; }
+
+/* ---------- Kam motion chahiye ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001s !important; animation-iteration-count: 1 !important; transition-duration: 0.001s !important; }
+}
 </style>
 </head>
 <body class="sleep" data-state="sleeping">
-<div class="bg" aria-hidden="true"></div>
-<div class="hex" aria-hidden="true"></div>
-<div id="scene" aria-hidden="true"></div>
-<div class="scan" aria-hidden="true"></div>
+<div class="bg-grid" aria-hidden="true"></div>
+<div class="bg-glow" aria-hidden="true"></div>
 <div class="vignette" aria-hidden="true"></div>
-<canvas id="wave" aria-hidden="true"></canvas>
 
-<div class="shock" aria-hidden="true"></div>
-<div class="shock b" aria-hidden="true"></div>
-<div class="shock c" aria-hidden="true"></div>
-<div id="flash" aria-hidden="true"></div>
+<main class="hud">
+  <!-- ===== Top bar ===== -->
+  <header class="topbar">
+    <div class="brand">J.A.R.V.I.S</div>
+    <div class="pill" role="status"><span class="dot"></span><span id="pillText">Sleeping</span></div>
+    <div class="ruler" aria-hidden="true"></div>
+    <div class="online">SYSTEM <b>ONLINE</b></div>
+  </header>
 
-<div id="sleep" aria-live="polite">
-  <div class="ember"></div>
-  <div class="sleep-hint">Say “Jarvis wake up”</div>
-</div>
+  <!-- ===== Left column ===== -->
+  <section class="col-left">
+    <div class="panel">
+      <h3>Chronometer</h3>
+      <div class="clock-wrap">
+        <svg class="date-ring" viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(31,169,255,0.15)" stroke-width="5"/>
+          <circle id="monthArc" cx="50" cy="50" r="44" fill="none" stroke="#1fa9ff" stroke-width="5"
+                  stroke-linecap="round" transform="rotate(-90 50 50)" style="filter: drop-shadow(0 0 3px #1fa9ff)"/>
+          <circle cx="50" cy="50" r="36" fill="none" stroke="rgba(143,227,255,0.25)" stroke-width="1" stroke-dasharray="2 4"/>
+          <text id="dayNum" class="num" x="50" y="54" text-anchor="middle">--</text>
+          <text id="monName" class="mon" x="50" y="70" text-anchor="middle">---</text>
+        </svg>
+        <div>
+          <div class="time"><span id="hm">--:--</span><small id="ss">--</small></div>
+          <div class="fulldate" id="fullDate"></div>
+        </div>
+      </div>
+    </div>
 
-<div class="hud top">
-  <div>
-    <div class="brand" data-t="J.A.R.V.I.S">J.A.R.V.I.S</div>
-    <div class="tag">Just A Rather Very Intelligent System</div>
-    <div class="status" role="status"><span class="dot"></span><span id="stateText">Online</span></div>
-  </div>
-  <div>
-    <div class="clock" id="clock">00:00:00</div>
-    <div class="date" id="date"></div>
-  </div>
-</div>
+    <div class="panel">
+      <h3>System <small>LIVE</small></h3>
+      <div class="gauges">
+        <div class="gauge" data-g="cpu"></div>
+        <div class="gauge" data-g="ram"></div>
+        <div class="gauge" data-g="bat"></div>
+      </div>
+      <div class="bars">
+        <div class="bar-row"><span>DISK</span><div class="segs" id="diskS"></div><span id="diskV">--%</span></div>
+        <div class="bar-row"><span>NET</span><div class="segs" id="netS"></div><span id="netV">-- MB/s</span></div>
+      </div>
+    </div>
 
-<div class="hud left">
-  <div class="panel">
-    <h3>System</h3>
-    <div class="stat"><div class="stat-row"><span>CPU</span><span id="cpuV">0%</span></div><div class="segs" id="cpuS"></div></div>
-    <div class="stat"><div class="stat-row"><span>Memory</span><span id="ramV">0%</span></div><div class="segs" id="ramS"></div></div>
-    <div class="stat"><div class="stat-row"><span>Battery</span><span id="batV">--</span></div><div class="segs" id="batS"></div></div>
-  </div>
-  <div class="panel">
-    <h3>Network scan</h3>
-    <canvas id="radar" width="360" height="360"></canvas>
-  </div>
-</div>
+    <div class="panel activity">
+      <h3>Activity</h3>
+      <ul class="acts" id="acts"><li class="empty">Koi kaam nahi chal raha</li></ul>
+    </div>
+  </section>
 
-<div class="hud right">
-  <div class="panel">
-    <h3>Activity</h3>
-    <div class="log" id="log"></div>
-  </div>
-  <div class="panel">
-    <h3>Modules</h3>
-    <ul class="mods">
-      <li><span>Voice</span><span>Online</span></li>
-      <li><span>Web search</span><span>Online</span></li>
-      <li><span>Apps control</span><span>Online</span></li>
-      <li><span>Gemini core</span><span>Online</span></li>
-    </ul>
-  </div>
-</div>
+  <!-- ===== Center ===== -->
+  <section class="center">
+    <div class="dial">
+      <svg viewBox="0 0 600 600" aria-hidden="true">
+        <defs>
+          <filter id="soft"><feGaussianBlur stdDeviation="2.2"/></filter>
+          <radialGradient id="coreGlow">
+            <stop offset="0" stop-color="#1fa9ff" stop-opacity="0.35"/>
+            <stop offset="1" stop-color="#1fa9ff" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <circle cx="300" cy="300" r="170" fill="url(#coreGlow)"/>
+        <!-- Bahar ki patli rings -->
+        <g class="spin r-cw-slow">
+          <circle cx="300" cy="300" r="292" fill="none" stroke="rgba(31,169,255,0.35)" stroke-width="1"/>
+          <circle cx="300" cy="300" r="286" fill="none" stroke="rgba(143,227,255,0.5)" stroke-width="1.5" stroke-dasharray="120 60 30 60"/>
+        </g>
+        <!-- 120 ticks (har 10th lamba) - JS se bante hain -->
+        <g id="ticks" class="spin r-ccw"></g>
+        <!-- Dotted ring -->
+        <g class="spin r-cw">
+          <circle cx="300" cy="300" r="240" fill="none" stroke="rgba(143,227,255,0.55)" stroke-width="2.5" stroke-dasharray="0.1 9" stroke-linecap="round"/>
+        </g>
+        <!-- Amber arc -->
+        <g class="spin r-ccw-fast">
+          <path d="M 300 74 A 226 226 0 0 1 495.7 187" fill="none" stroke="#ffb03a" stroke-width="3" stroke-linecap="round" style="filter: drop-shadow(0 0 5px #ffb03a)"/>
+          <path d="M 300 526 A 226 226 0 0 1 150 469" fill="none" stroke="rgba(255,176,58,0.45)" stroke-width="1.5"/>
+        </g>
+        <!-- Andar moti segmented ring -->
+        <g class="spin r-cw">
+          <circle cx="300" cy="300" r="204" fill="none" stroke="rgba(31,169,255,0.8)" stroke-width="14" stroke-dasharray="46 8"/>
+          <circle cx="300" cy="300" r="204" fill="none" stroke="#8fe3ff" stroke-width="14" stroke-dasharray="46 8" opacity="0.35" filter="url(#soft)"/>
+        </g>
+        <circle cx="300" cy="300" r="186" fill="none" stroke="rgba(31,169,255,0.3)" stroke-width="1"/>
+        <circle cx="300" cy="300" r="122" fill="none" stroke="rgba(143,227,255,0.35)" stroke-width="1"/>
+      </svg>
+      <canvas id="wave"></canvas>
+      <div class="dial-core">
+        <div class="name">JARVIS</div>
+        <div class="state" id="stateText">Sleeping</div>
+      </div>
+    </div>
+    <div class="caption" id="caption" aria-live="polite"></div>
+    <div class="note" id="note"></div>
+  </section>
 
-<div class="hud chat">
-  <div class="messages" id="messages" aria-live="polite"></div>
-  <div class="input-row">
-    <input id="input" type="text" placeholder="Bolo ya type karo, sir…" autocomplete="off" aria-label="Message to JARVIS">
-    <button id="send">Send</button>
-  </div>
-</div>
+  <!-- ===== Right column ===== -->
+  <section class="col-right">
+    <div class="panel">
+      <h3>Weather</h3>
+      <div class="weather">
+        <svg viewBox="0 0 110 110" aria-hidden="true">
+          <circle cx="55" cy="55" r="48" fill="none" stroke="rgba(31,169,255,0.15)" stroke-width="6"
+                  stroke-dasharray="226 302" transform="rotate(135 55 55)"/>
+          <circle id="tempArc" cx="55" cy="55" r="48" fill="none" stroke="#1fa9ff" stroke-width="6" stroke-linecap="round"
+                  stroke-dasharray="0 302" transform="rotate(135 55 55)" style="filter: drop-shadow(0 0 3px #1fa9ff)"/>
+          <text id="wTemp" class="temp" x="55" y="60" text-anchor="middle">--</text>
+          <text class="unit" x="55" y="78" text-anchor="middle">°C</text>
+        </svg>
+        <div>
+          <div class="city" id="wCity">No data</div>
+          <div class="desc" id="wDesc">"Delhi ka weather" poochiye</div>
+          <div class="upd" id="wUpd"></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel convo">
+      <h3>Conversation</h3>
+      <div class="msgs" id="msgs"></div>
+    </div>
+  </section>
 
-<div class="preview-hint" id="hint">Preview: <kbd>W</kbd> wake · <kbd>S</kbd> sleep · <kbd>1-4</kbd> states</div>
+  <!-- ===== Bottom dock ===== -->
+  <footer class="dock">
+    <div class="dock-btns">
+      <button class="btn" data-cmd="Chrome kholo" title="Browser" aria-label="Browser">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg><span>Browser</span></button>
+      <button class="btn" data-cmd="YouTube kholo" title="YouTube" aria-label="YouTube">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="3"/><path d="M10 9.5v5l4.5-2.5z" fill="currentColor"/></svg><span>YouTube</span></button>
+      <button class="btn" data-cmd="WhatsApp kholo" title="WhatsApp" aria-label="WhatsApp">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20l1.3-4A8 8 0 1 1 8 18.7z"/><path d="M9 9.5c.5 2 2 3.5 4 4"/></svg><span>WhatsApp</span></button>
+    </div>
+    <div class="cmd">
+      <input id="cmdInput" type="text" placeholder="Command likhiye, sir…" autocomplete="off" aria-label="Command">
+      <button id="sendBtn">SEND</button>
+    </div>
+    <div class="dock-btns">
+      <button class="btn" data-cmd="Spotify kholo" title="Music" aria-label="Music">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg><span>Music</span></button>
+      <button class="btn" data-cmd="File explorer kholo" title="Files" aria-label="Files">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Files</span></button>
+      <button class="btn" data-cmd="screen pe kya hai" title="Scan screen" aria-label="Scan screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><path d="M7 12h10"/></svg><span>Scan</span></button>
+    </div>
+  </footer>
+</main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<div class="sleep-msg" aria-live="polite"><div class="ember"></div><p>SAY "JARVIS WAKE UP"</p></div>
+<div class="flash" aria-hidden="true"></div>
+
 <script>
 (() => {
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  "use strict";
+  const $ = (id) => document.getElementById(id);
   const body = document.body;
-
-  /* ================= 3D CORE ================= */
-  const host = document.getElementById("scene");
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  host.appendChild(renderer.domElement);
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-  camera.position.z = 8;
-  const CYAN = new THREE.Color("#2de2ff"), HOT = new THREE.Color("#ff5a1f");
-  const orb = new THREE.Group(); scene.add(orb);
-  const add = (m) => { orb.add(m); return m; };
-  const ADD = THREE.AdditiveBlending;
-
-  // glow sprite
-  const gc = document.createElement("canvas"); gc.width = gc.height = 128;
-  const gx = gc.getContext("2d"), gr = gx.createRadialGradient(64,64,0,64,64,64);
-  gr.addColorStop(0,"rgba(255,255,255,1)"); gr.addColorStop(0.2,"rgba(45,226,255,0.9)"); gr.addColorStop(1,"rgba(45,226,255,0)");
-  gx.fillStyle = gr; gx.fillRect(0,0,128,128);
-  const glow = add(new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(gc), blending: ADD, transparent: true, depthWrite: false })));
-
-  const core = add(new THREE.Mesh(new THREE.SphereGeometry(0.38, 32, 32), new THREE.MeshBasicMaterial({ color: 0xf2feff })));
-  const inner = add(new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(0.75, 0)),
-    new THREE.LineBasicMaterial({ color: HOT, transparent: true, opacity: 0.7, blending: ADD })));
-  const shell = add(new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.15, 1)),
-    new THREE.LineBasicMaterial({ color: CYAN, transparent: true, opacity: 0.4, blending: ADD })));
-
-  // particle shell
-  const N = 2200, base = new Float32Array(N*3), pos = new Float32Array(N*3);
-  for (let i = 0; i < N; i++) {
-    const th = Math.random()*Math.PI*2, ph = Math.acos(2*Math.random()-1), r = 1.6 + Math.random()*0.15;
-    base.set([r*Math.sin(ph)*Math.cos(th), r*Math.sin(ph)*Math.sin(th), r*Math.cos(ph)], i*3);
-  }
-  pos.set(base);
-  const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  const pMat = new THREE.PointsMaterial({ color: CYAN, size: 0.03, transparent: true, blending: ADD, depthWrite: false });
-  const particles = add(new THREE.Points(pGeo, pMat));
-
-  // segmented rings
-  const rings = [];
-  const ringDef = [[2.1, 24, 0.7, 1.35, 0.3, CYAN], [2.4, 60, 0.35, -0.5, 0.8, CYAN], [2.7, 6, 0.8, 0.2, -0.4, HOT]];
-  ringDef.forEach(([r, segs, fill, rx, ry, col]) => {
-    const g = new THREE.Group();
-    for (let s = 0; s < segs; s++) {
-      const arc = (Math.PI*2/segs)*fill;
-      const m = new THREE.Mesh(new THREE.TorusGeometry(r, 0.018, 6, 24, arc), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.8, blending: ADD }));
-      m.rotation.z = s*(Math.PI*2/segs); g.add(m);
-    }
-    g.rotation.set(rx, ry, 0); orb.add(g); rings.push(g);
-  });
-
-  // lightning arcs
-  const ARCS = 7, arcs = [];
-  for (let a = 0; a < ARCS; a++) {
-    const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(10*3), 3));
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: a % 3 === 0 ? HOT : CYAN, transparent: true, opacity: 0, blending: ADD }));
-    orb.add(line); arcs.push(line);
-  }
-  const rv = () => { const v = new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5); return v.normalize(); };
-  function zap(line) {
-    const a = rv().multiplyScalar(0.4), b = rv().multiplyScalar(1.6 + Math.random()*0.9), arr = line.geometry.attributes.position.array;
-    for (let i = 0; i < 10; i++) {
-      const t = i/9, p = a.clone().lerp(b, t);
-      if (i > 0 && i < 9) p.add(rv().multiplyScalar(0.18));
-      arr[i*3] = p.x; arr[i*3+1] = p.y; arr[i*3+2] = p.z;
-    }
-    line.geometry.attributes.position.needsUpdate = true;
-    line.material.opacity = 1;
-  }
-
-  function resize() {
-    const w = innerWidth, h = innerHeight;
-    renderer.setSize(w, h); camera.aspect = w/h;
-    camera.position.z = w < 900 ? 10.5 : 8; camera.updateProjectionMatrix();
-    orb.position.y = w < 900 ? 1.1 : 0.6;
-    placeWave();
-  }
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const NS = "http://www.w3.org/2000/svg";
 
   /* ================= STATES ================= */
-  const STATES = {
-    sleeping:  { glow: 0.15, speed: 0.15, arcs: 0,    label: "Sleeping" },
-    standby:   { glow: 0.75, speed: 0.6,  arcs: 0.03, label: "Online" },
-    listening: { glow: 1.0,  speed: 1.8,  arcs: 0.12, label: "Listening…" },
-    thinking:  { glow: 0.9,  speed: 3.5,  arcs: 0.25, label: "Searching & thinking…" },
-    speaking:  { glow: 1.0,  speed: 1.1,  arcs: 0.08, label: "Speaking" }
-  };
-  let state = "sleeping", cur = { glow: 0.15, speed: 0.15 }, level = 0, extLevel = null, burst = 0;
+  // Python ye naam bhejta hai: sleeping / standby / listening / thinking / speaking
+  const LABELS = { sleeping: "Sleeping", standby: "Online", listening: "Listening", thinking: "Working", speaking: "Speaking" };
+  const ALIAS = { online: "standby", working: "thinking" };
+  let state = "sleeping", awake = false;
   function setState(s) {
-    if (!STATES[s]) return;
-    state = s; body.dataset.state = s;
-    document.getElementById("stateText").textContent = STATES[s].label;
+    s = String(s || "").toLowerCase();
+    s = ALIAS[s] || s;
+    if (!LABELS[s]) return;
+    state = s;
+    body.dataset.state = s;
+    $("pillText").textContent = LABELS[s];
+    $("stateText").textContent = LABELS[s];
   }
 
-  const clock = new THREE.Clock(); let last = 0;
-  function tick() {
-    const t = clock.getElapsedTime(); const dt = Math.min(t - last, 0.05); last = t;
-    const S = STATES[state];
-    cur.glow += (S.glow - cur.glow)*0.05; cur.speed += (S.speed - cur.speed)*0.05;
-    burst *= 0.94;
-
-    const sim = state === "speaking" ? Math.abs(Math.sin(t*8)*0.55 + Math.sin(t*21)*0.45) : (state === "listening" ? 0.15 + Math.abs(Math.sin(t*3))*0.1 : 0);
-    level += (((extLevel !== null && state === "speaking") ? extLevel : sim) - level)*0.25;
-
-    const sp = (reduced ? 0.25 : 1) * (cur.speed + burst*6);
-    shell.rotation.y += 0.25*sp*dt; shell.rotation.x += 0.12*sp*dt;
-    inner.rotation.y -= 0.6*sp*dt; inner.rotation.z += 0.3*sp*dt;
-    particles.rotation.y -= 0.15*sp*dt;
-    rings[0].rotation.z += 0.4*sp*dt; rings[1].rotation.z -= 0.6*sp*dt; rings[2].rotation.z += 0.9*sp*dt;
-
-    const arr = pGeo.attributes.position.array;
-    for (let i = 0; i < N; i++) {
-      const by = base[i*3+1];
-      let k = 1 + level*0.32*Math.sin(by*6 + t*11) + burst*1.4;
-      if (state === "thinking") k += 0.1*Math.max(0, Math.sin(by*3 - t*6));
-      arr[i*3] = base[i*3]*k; arr[i*3+1] = by*k; arr[i*3+2] = base[i*3+2]*k;
-    }
-    pGeo.attributes.position.needsUpdate = true;
-
-    const pulse = 1 + level*0.3 + burst*0.8 + (reduced ? 0 : Math.sin(t*2.2)*0.04);
-    core.scale.setScalar(pulse);
-    glow.scale.setScalar(3.6*cur.glow*pulse); glow.material.opacity = Math.min(1, cur.glow + burst);
-    shell.material.opacity = 0.15 + cur.glow*0.4;
-    pMat.opacity = 0.25 + cur.glow*0.6;
-    shell.material.color.lerp(state === "thinking" ? HOT : CYAN, 0.05);
-    pMat.color.lerp(state === "thinking" ? HOT : CYAN, 0.05);
-
-    const chance = reduced ? 0 : S.arcs + burst*0.8;
-    arcs.forEach(l => { if (Math.random() < chance) zap(l); l.material.opacity *= 0.8; });
-
-    renderer.render(scene, camera);
-    drawWave(t); drawRadar(t);
-    requestAnimationFrame(tick);
+  /* ================= DIAL: 120 ticks ================= */
+  const ticks = $("ticks");
+  for (let i = 0; i < 120; i++) {
+    const long = i % 10 === 0;
+    const a = (i / 120) * Math.PI * 2;
+    const r1 = long ? 252 : 262, r2 = 274;
+    const l = document.createElementNS(NS, "line");
+    l.setAttribute("x1", 300 + Math.cos(a) * r1); l.setAttribute("y1", 300 + Math.sin(a) * r1);
+    l.setAttribute("x2", 300 + Math.cos(a) * r2); l.setAttribute("y2", 300 + Math.sin(a) * r2);
+    l.setAttribute("stroke", long ? "#8fe3ff" : "rgba(31,169,255,0.55)");
+    l.setAttribute("stroke-width", long ? 2.4 : 1.2);
+    if (long) l.style.filter = "drop-shadow(0 0 3px #8fe3ff)";
+    ticks.appendChild(l);
   }
 
-  /* ================= WAVEFORM ================= */
-  const wave = document.getElementById("wave"), wx = wave.getContext("2d");
-  function placeWave() {
-    const r = Math.min(innerWidth, innerHeight);
-    wave.style.top = (innerWidth < 900 ? innerHeight*0.56 : innerHeight*0.64) + "px";
-    wave.width = wave.clientWidth * Math.min(devicePixelRatio, 2);
-    wave.height = 60 * Math.min(devicePixelRatio, 2);
+  /* ================= DIAL: 96 radial bars (gol waveform) ================= */
+  const cv = $("wave"), cx = cv.getContext("2d");
+  const BARS = 96;
+  let level = 0, extLevel = 0, lastLevelAt = -1e9;
+  function sizeCanvas() {
+    const r = cv.getBoundingClientRect(), d = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.max(1, Math.round(r.width * d)); cv.height = Math.max(1, Math.round(r.height * d));
   }
   function drawWave(t) {
-    const W = wave.width, H = wave.height, bars = 56, bw = W/bars;
-    wx.clearRect(0,0,W,H);
-    for (let i = 0; i < bars; i++) {
-      const c = Math.abs(i - bars/2)/(bars/2);
-      const n = Math.abs(Math.sin(i*1.7 + t*9) * Math.cos(i*0.6 - t*5));
-      const h = Math.max(2*devicePixelRatio, (0.06 + level*1.1*n*(1 - c*0.8)) * H);
-      wx.fillStyle = state === "thinking" ? "#ff5a1f" : "#2de2ff";
-      wx.globalAlpha = 0.35 + (1 - c)*0.6;
-      wx.fillRect(i*bw + bw*0.2, (H - h)/2, bw*0.6, h);
+    const W = cv.width, c = W / 2, s = W / 600;
+    cx.clearRect(0, 0, W, cv.height);
+    const inner = 130 * s, maxLen = 52 * s;     // "JARVIS" text se bahar, r=186 ring ke andar
+    // Python ka setLevel 0.4s se purana ho gaya to use shaant maano
+    const live = (t - lastLevelAt) < 400 ? extLevel : 0;
+    let target;
+    if (state === "speaking") target = Math.max(live, 0.08);
+    else if (state === "listening") target = 0.14;
+    else if (state === "thinking") target = 0.4;
+    else if (state === "sleeping") target = 0.02;
+    else target = 0.06;
+    level += (target - level) * 0.2;
+
+    const tt = t / 1000;
+    cx.lineWidth = 3 * s;
+    cx.lineCap = "round";
+    for (let i = 0; i < BARS; i++) {
+      const a = (i / BARS) * Math.PI * 2 - Math.PI / 2;
+      let n;
+      if (state === "thinking") n = 0.2 + 0.8 * Math.max(0, Math.sin(a * 2 - tt * 4));   // ghoomti wave
+      else if (state === "listening") n = 0.5 + 0.5 * Math.sin(a * 3 + tt * 2.2);        // halka lehrana
+      else n = 0.35 + 0.65 * Math.abs(Math.sin(i * 1.7 + tt * 9) * Math.cos(i * 0.45 - tt * 5));
+      const len = Math.max(2 * s, level * maxLen * n + 3 * s);
+      cx.strokeStyle = state === "thinking" ? `rgba(255,176,58,${0.45 + n * 0.55})` : `rgba(143,227,255,${0.35 + n * 0.6})`;
+      cx.beginPath();
+      cx.moveTo(c + Math.cos(a) * inner, c + Math.sin(a) * inner);
+      cx.lineTo(c + Math.cos(a) * (inner + len), c + Math.sin(a) * (inner + len));
+      cx.stroke();
     }
-    wx.globalAlpha = 1;
+  }
+  function frame(t) {
+    drawWave(reduced ? 0 : t);
+    requestAnimationFrame(frame);
   }
 
-  /* ================= RADAR ================= */
-  const radar = document.getElementById("radar"), rx = radar.getContext("2d");
-  const blips = Array.from({ length: 6 }, () => ({ a: Math.random()*Math.PI*2, r: 0.2 + Math.random()*0.7, life: 0 }));
-  function drawRadar(t) {
-    if (!radar.offsetParent) return;
-    const S = radar.width, c = S/2, R = c - 6;
-    rx.clearRect(0,0,S,S);
-    rx.strokeStyle = "rgba(45,226,255,0.35)"; rx.lineWidth = 1.5;
-    [1, 0.66, 0.33].forEach(k => { rx.beginPath(); rx.arc(c, c, R*k, 0, Math.PI*2); rx.stroke(); });
-    rx.beginPath(); rx.moveTo(c - R, c); rx.lineTo(c + R, c); rx.moveTo(c, c - R); rx.lineTo(c, c + R); rx.stroke();
-    const sweep = (t*1.6) % (Math.PI*2);
-    const g = rx.createConicGradient ? rx.createConicGradient(sweep - 0.9, c, c) : null;
-    if (g) { g.addColorStop(0, "rgba(45,226,255,0)"); g.addColorStop(0.14, "rgba(45,226,255,0.45)"); g.addColorStop(0.1401, "rgba(45,226,255,0)"); rx.fillStyle = g; rx.beginPath(); rx.arc(c, c, R, 0, Math.PI*2); rx.fill(); }
-    rx.strokeStyle = "#2de2ff"; rx.lineWidth = 2; rx.beginPath(); rx.moveTo(c, c); rx.lineTo(c + Math.cos(sweep)*R, c + Math.sin(sweep)*R); rx.stroke();
-    blips.forEach(b => {
-      const d = Math.abs(((sweep - b.a) + Math.PI*2) % (Math.PI*2));
-      if (d < 0.05) b.life = 1;
-      b.life *= 0.985;
-      if (b.life > 0.02) {
-        rx.fillStyle = `rgba(255,90,31,${b.life})`;
-        rx.beginPath(); rx.arc(c + Math.cos(b.a)*R*b.r, c + Math.sin(b.a)*R*b.r, 5, 0, Math.PI*2); rx.fill();
-      }
-    });
-  }
-
-  /* ================= SOUND FX ================= */
-  let ac = null;
-  function audio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === "suspended") ac.resume(); } catch (e) {} return ac; }
-  function wakeSound() {
-    const a = audio(); if (!a) return;
-    const now = a.currentTime;
-    const boom = a.createOscillator(), bg = a.createGain();
-    boom.type = "sine"; boom.frequency.setValueAtTime(140, now); boom.frequency.exponentialRampToValueAtTime(35, now + 1.2);
-    bg.gain.setValueAtTime(0.7, now); bg.gain.exponentialRampToValueAtTime(0.001, now + 1.4);
-    boom.connect(bg).connect(a.destination); boom.start(now); boom.stop(now + 1.5);
-    const len = a.sampleRate * 1.2, buf = a.createBuffer(1, len, a.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random()*2 - 1) * (1 - i/len);
-    const n = a.createBufferSource(), f = a.createBiquadFilter(), ng = a.createGain();
-    n.buffer = buf; f.type = "bandpass"; f.Q.value = 2;
-    f.frequency.setValueAtTime(300, now); f.frequency.exponentialRampToValueAtTime(5000, now + 0.9);
-    ng.gain.setValueAtTime(0.35, now); ng.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-    n.connect(f).connect(ng).connect(a.destination); n.start(now);
-  }
-  function blip(freq = 880) {
-    const a = audio(); if (!a) return;
-    const o = a.createOscillator(), g = a.createGain(), now = a.currentTime;
-    o.type = "triangle"; o.frequency.value = freq;
-    g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-    o.connect(g).connect(a.destination); o.start(now); o.stop(now + 0.16);
-  }
-
-  /* ================= STATS ================= */
-  ["cpuS", "ramS", "batS"].forEach(id => { const el = document.getElementById(id); for (let i = 0; i < 20; i++) el.appendChild(document.createElement("i")); });
-  function setBar(id, v) {
-    v = Math.max(0, Math.min(100, v));
-    document.getElementById(id + "V").textContent = Math.round(v) + "%";
-    const on = Math.round(v/5);
-    [...document.getElementById(id + "S").children].forEach((s, i) => { s.className = i < on ? ("on" + (v > 80 && id !== "bat" ? " hot" : "")) : ""; });
-  }
-  let fromPy = false, cpu = 24, ram = 52;
-  setInterval(() => { if (fromPy) return; cpu = Math.max(4, Math.min(96, cpu + (Math.random() - 0.5)*14)); ram = Math.max(30, Math.min(88, ram + (Math.random() - 0.5)*4)); setBar("cpu", cpu); setBar("ram", ram); }, 1400);
-  setBar("bat", 100);
-  if (navigator.getBattery) navigator.getBattery().then(b => { const u = () => { if (!fromPy) setBar("bat", b.level*100); }; u(); b.addEventListener("levelchange", u); }).catch(() => {});
-
-  function updClock() {
+  /* ================= CLOCK ================= */
+  const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+  const monthArc = $("monthArc"), MC = 2 * Math.PI * 44;
+  const pad = (n) => String(n).padStart(2, "0");
+  function tickClock() {
     const d = new Date();
-    document.getElementById("clock").textContent = d.toLocaleTimeString("en-GB");
-    document.getElementById("date").textContent = d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    $("hm").textContent = pad(d.getHours()) + ":" + pad(d.getMinutes());
+    $("ss").textContent = pad(d.getSeconds());
+    $("dayNum").textContent = d.getDate();
+    $("monName").textContent = MONTHS[d.getMonth()];
+    $("fullDate").textContent = d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    const days = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    monthArc.setAttribute("stroke-dasharray", `${MC * d.getDate() / days} ${MC}`);   // mahina kitna beeta
   }
-  setInterval(updClock, 1000); updClock();
 
-  /* ================= LOG & CHAT ================= */
-  const logEl = document.getElementById("log");
-  function log(line) {
-    const d = document.createElement("div");
-    d.textContent = new Date().toLocaleTimeString("en-GB").slice(0, 5) + "  " + line;
-    logEl.prepend(d); while (logEl.children.length > 7) logEl.lastChild.remove();
+  /* ================= SYSTEM GAUGES ================= */
+  const GC = 2 * Math.PI * 34, GARC = GC * 0.75;          // 270° ka arc
+  const gauges = {};
+  document.querySelectorAll(".gauge").forEach((el) => {
+    const key = el.dataset.g;
+    const label = { cpu: "CPU", ram: "RAM", bat: "BATTERY" }[key];
+    el.innerHTML =
+      `<svg viewBox="0 0 90 90" aria-hidden="true"><circle cx="45" cy="45" r="34" fill="none" stroke="rgba(31,169,255,0.15)" stroke-width="7"
+        stroke-dasharray="${GARC} ${GC}" transform="rotate(135 45 45)"/>
+       <circle class="arc" cx="45" cy="45" r="34" fill="none" stroke="#1fa9ff" stroke-width="7" stroke-linecap="round"
+        stroke-dasharray="0 ${GC}" transform="rotate(135 45 45)" style="transition: stroke-dasharray .6s; filter: drop-shadow(0 0 3px #1fa9ff)"/>
+       <text class="val" x="45" y="51" text-anchor="middle">--</text></svg><div class="lbl">${label}</div>`;
+    gauges[key] = { arc: el.querySelector(".arc"), val: el.querySelector(".val") };
+  });
+  function setGauge(key, v) {
+    const g = gauges[key];
+    if (v === null || v === undefined || isNaN(v)) { g.val.textContent = "--"; g.arc.setAttribute("stroke-dasharray", `0 ${GC}`); return; }
+    v = Math.max(0, Math.min(100, Number(v)));
+    g.val.textContent = Math.round(v) + "%";
+    g.arc.setAttribute("stroke-dasharray", `${GARC * v / 100} ${GC}`);
   }
-  const msgs = document.getElementById("messages");
-  function addMessage(who, text, typing) {
+  ["diskS", "netS"].forEach((id) => { for (let i = 0; i < 24; i++) $(id).appendChild(document.createElement("i")); });
+  function setSegs(id, frac) {
+    const on = Math.round(Math.max(0, Math.min(1, frac)) * 24);
+    [...$(id).children].forEach((s, i) => s.classList.toggle("on", i < on));
+  }
+  function setStats(cpu, ram, battery, disk, net) {
+    setGauge("cpu", cpu); setGauge("ram", ram); setGauge("bat", battery);
+    if (disk !== undefined && disk !== null) { setSegs("diskS", disk / 100); $("diskV").textContent = Math.round(disk) + "%"; }
+    if (net !== undefined && net !== null) {
+      net = Number(net);
+      setSegs("netS", Math.log10(1 + net * 10) / 2);          // log scale: chhoti speed bhi dikhe
+      $("netV").textContent = (net < 10 ? net.toFixed(2) : Math.round(net)) + " MB/s";
+    }
+  }
+
+  /* ================= WEATHER ================= */
+  const TC = 2 * Math.PI * 48, TARC = TC * 0.75;
+  function setWeather(city, temp, desc) {
+    $("wCity").textContent = city || "--";
+    $("wDesc").textContent = desc ? desc.charAt(0).toUpperCase() + desc.slice(1) : "";
+    const t = Number(temp);
+    $("wTemp").textContent = isNaN(t) ? "--" : Math.round(t);
+    const frac = isNaN(t) ? 0 : Math.max(0, Math.min(1, (t + 10) / 60));   // -10°C .. 50°C
+    $("tempArc").setAttribute("stroke-dasharray", `${TARC * frac} ${TC}`);
+    const d = new Date();
+    $("wUpd").textContent = "UPDATED " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  /* ================= ACTIVITY ================= */
+  const acts = new Map();
+  function action(id, title, detail, status) {
+    status = ["running", "done", "failed"].includes(status) ? status : "running";
+    const list = $("acts");
+    const empty = list.querySelector(".empty"); if (empty) empty.remove();
+    let li = acts.get(String(id));
+    if (!li) {
+      li = document.createElement("li");
+      li.innerHTML = '<div class="st"></div><div><div class="t"></div><div class="d"></div></div><div class="tag"></div>';
+      list.prepend(li);
+      acts.set(String(id), li);
+      while (list.children.length > 7) {
+        const last = list.lastElementChild;
+        acts.forEach((v, k) => { if (v === last) acts.delete(k); });
+        last.remove();
+      }
+    }
+    li.className = status;
+    li.querySelector(".t").textContent = title || "";
+    li.querySelector(".d").textContent = detail || "";
+    li.querySelector(".tag").textContent = status.toUpperCase();
+  }
+
+  /* ================= LOG (dial ke neeche note line) ================= */
+  let noteTimer = null;
+  function log(text) {
+    $("note").textContent = text || "";
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => { $("note").textContent = ""; }, 8000);
+  }
+
+  /* ================= MESSAGES: bada caption + conversation list ================= */
+  const msgs = $("msgs"), caption = $("caption");
+  let typeTimer = null;
+  function addMessage(who, text) {
+    who = who === "user" ? "user" : "ai";
+    text = String(text || "");
+    // Conversation list
     const el = document.createElement("div");
-    el.className = "msg " + (who === "user" ? "user" : "ai");
+    el.className = "msg " + who;
     const b = document.createElement("b"); b.textContent = who === "user" ? "KRISH" : "JARVIS";
-    const s = document.createElement("span"); el.append(b, s); msgs.appendChild(el);
-    if (!typing || reduced) { s.textContent = text; msgs.scrollTop = msgs.scrollHeight; return Promise.resolve(); }
-    return new Promise(res => { let i = 0; const iv = setInterval(() => { s.textContent = text.slice(0, ++i); msgs.scrollTop = msgs.scrollHeight; if (i >= text.length) { clearInterval(iv); res(); } }, 20); });
+    const s = document.createElement("span"); s.textContent = text;
+    el.append(b, s); msgs.appendChild(el);
+    while (msgs.children.length > 80) msgs.firstElementChild.remove();
+    msgs.scrollTop = msgs.scrollHeight;
+    // Caption: mera bola hua amber quotes mein, JARVIS ka typing effect ke saath
+    clearInterval(typeTimer);
+    caption.textContent = "";
+    if (who === "user") {
+      const u = document.createElement("span"); u.className = "user"; u.textContent = "“" + text + "”";
+      caption.appendChild(u);
+      return;
+    }
+    const span = document.createElement("span"), cur = document.createElement("span");
+    cur.className = "cursor";
+    caption.append(span, cur);
+    if (reduced) { span.textContent = text; cur.remove(); return; }
+    let i = 0;
+    typeTimer = setInterval(() => {
+      i += 2;
+      span.textContent = text.slice(0, i);
+      if (i >= text.length) { clearInterval(typeTimer); setTimeout(() => cur.remove(), 1200); }
+    }, 22);
   }
 
-  const hasPy = () => !!(window.pywebview && window.pywebview.api);
-  const input = document.getElementById("input");
-  async function send() {
-    const text = input.value.trim(); if (!text) return;
-    input.value = ""; blip(660);
-    addMessage("user", text); setState("thinking"); log("Processing: " + text.slice(0, 22));
-    let reply;
-    try {
-      if (hasPy() && window.pywebview.api.ask) reply = await window.pywebview.api.ask(text);
-      else { await new Promise(r => setTimeout(r, 1300)); reply = "Preview mode, sir. Python backend connect hote hi main asli jawab dunga."; }
-    } catch (e) { reply = "Backend se connection nahi hua. Python app chal raha hai, check kijiye."; }
-    setState("speaking"); await addMessage("ai", reply, true); setState("standby");
+  function setLevel(v) {
+    extLevel = Math.max(0, Math.min(1, Number(v) || 0));
+    lastLevelAt = performance.now();
   }
-  document.getElementById("send").addEventListener("click", send);
-  input.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+
+  /* ================= SOUND (Web Audio) ================= */
+  let ac = null;
+  function wakeSound() {
+    try {
+      ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+      if (ac.state === "suspended") ac.resume();
+      const now = ac.currentTime;
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(180, now);
+      o.frequency.exponentialRampToValueAtTime(880, now + 0.35);
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.12, now + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+      o.connect(g).connect(ac.destination);
+      o.start(now); o.stop(now + 0.65);
+    } catch (e) { /* awaaz na chale to koi baat nahi */ }
+  }
 
   /* ================= WAKE / SLEEP ================= */
-  let awake = false;
-  function greeting() { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; }
-  async function wake(text) {
-    if (awake) return; awake = true;
-    wakeSound();
-    body.classList.add("waking"); body.classList.remove("sleep");
-    burst = 1; setState("listening");
-    ["Wake word detected", "Core reactor online", "Voice module linked", "Search network online"].forEach((l, i) => setTimeout(() => { log(l); blip(700 + i*140); }, 250 + i*260));
-    setTimeout(() => body.classList.remove("waking"), 1500);
-    await new Promise(r => setTimeout(r, 1300));
-    setState("speaking");
-    await addMessage("ai", text || (greeting() + ", Krish. Sab systems online hain. Bataiye, kya karna hai?"), true);
+  function wake() {
+    if (awake) return;
+    awake = true;
+    if (!reduced) wakeSound();
+    body.classList.remove("sleep");
+    body.classList.add("waking");
+    setTimeout(() => body.classList.remove("waking"), 900);
     setState("listening");
   }
   function sleep() {
-    if (!awake) return; awake = false;
-    blip(300); log("Entering sleep mode");
-    setState("sleeping"); body.classList.add("sleep");
+    awake = false;
+    body.classList.add("sleep");
+    setState("sleeping");
   }
 
-  // Preview-only keyboard controls (Python app ke andar ye hint chhup jaata hai)
-  addEventListener("keydown", e => {
-    if (document.activeElement === input) return;
-    const k = e.key.toLowerCase();
-    if (k === "w") wake(); else if (k === "s") sleep();
-    else if (awake && "1234".includes(k)) setState(["standby", "listening", "thinking", "speaking"][+k - 1]);
+  /* ================= COMMANDS -> Python ================= */
+  const hasPy = () => !!(window.pywebview && window.pywebview.api && window.pywebview.api.ask);
+  let busy = false;
+  async function send(text) {
+    text = String(text || "").trim();
+    if (!text || busy) return;
+    busy = true;
+    const before = state;
+    addMessage("user", text);
+    setState("thinking");
+    let reply;
+    try {
+      if (hasPy()) reply = await window.pywebview.api.ask(text);
+      else { await new Promise((r) => setTimeout(r, 900)); reply = "Preview mode, sir. Python backend judne par asli jawab aayega."; }
+    } catch (e) {
+      reply = "Backend se jawab nahi aaya, sir.";
+    }
+    if (reply) addMessage("ai", reply);
+    // Voice loop ne beech mein state badli ho to wahi rehne do
+    if (state === "thinking") setState(before === "sleeping" ? "standby" : before);
+    busy = false;
+  }
+  const input = $("cmdInput");
+  $("sendBtn").addEventListener("click", () => { send(input.value); input.value = ""; input.focus(); });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { send(input.value); input.value = ""; } });
+  document.querySelectorAll(".btn[data-cmd]").forEach((b) => b.addEventListener("click", () => send(b.dataset.cmd)));
+
+  // Esc = window chhupao (Python hide karta hai)
+  addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && window.pywebview && window.pywebview.api && window.pywebview.api.hide) window.pywebview.api.hide();
   });
-  document.getElementById("sleep").style.pointerEvents = "auto";
-  document.getElementById("sleep").addEventListener("click", () => { if (!hasPy()) wake(); });
-  addEventListener("pywebviewready", () => { document.getElementById("hint").style.display = "none"; });
 
-  /* ================= PYTHON BRIDGE ================= */
-  // Python: window.evaluate_js("jarvis.wake()")
-  window.jarvis = {
-    wake, sleep, setState, log,
-    addMessage: (who, text) => addMessage(who, text, who !== "user"),
-    setLevel: v => { extLevel = Math.max(0, Math.min(1, v)); },
-    setStats: (c, r, b) => { fromPy = true; setBar("cpu", c); setBar("ram", r); if (b != null) setBar("bat", b); }
-  };
+  /* ================= Python bridge ================= */
+  window.jarvis = { wake, sleep, setState, addMessage, log, setLevel, setStats, setWeather, action };
 
-  addEventListener("resize", resize); resize();
+  addEventListener("resize", sizeCanvas);
+  sizeCanvas();
+  tickClock(); setInterval(tickClock, 1000);
   setState("sleeping");
-  tick();
+  requestAnimationFrame(frame);
+
+  /* ================= Preview (sirf browser mein "#preview" / "#preview-sleep") ================= */
+  if (location.hash === "#preview") {
+    body.classList.add("snap");
+    setTimeout(() => {
+      wake();
+      setStats(34, 71, 58, 62, 1.8);
+      setWeather("Delhi", 31, "partly cloudy");
+      action(1, "Checking weather", "Delhi", "done");
+      action(2, "Opening YouTube", "youtube.com", "done");
+      action(3, "Scanning screen", "vision model", "failed");
+      action(4, "Searching web", "India cricket news", "running");
+      addMessage("user", "Delhi ka weather kaisa hai");
+      addMessage("ai", "Sir, Delhi mein abhi 31 degree hai, partly cloudy. Aaj baarish ka chance 10 percent.");
+      addMessage("user", "YouTube kholo");
+      addMessage("ai", "YouTube khol raha hoon, sir.");
+      setState("speaking");
+      log("Voice: ElevenLabs");
+      setInterval(() => setLevel(0.3 + Math.random() * 0.7), 60);
+    }, 200);
+  }
 })();
 </script>
 </body>

@@ -13,6 +13,7 @@
 import datetime            # Time aur date ke liye
 import functools           # Decorator banane ke liye (neeche @tool dekho)
 import inspect             # Tool ke parameters ke naam padhne ke liye (UI message mein)
+import itertools           # Activity panel ke liye kaam ke number (1, 2, 3...)
 import os                  # Files, folders, apps kholne ke liye
 import re                  # Message mein words dhoondhne ke liye (safety lock)
 import subprocess          # Windows commands chalane ke liye
@@ -119,15 +120,36 @@ def _asked_for(words):
 #   3. try/except - tool fail ho to crash nahi, error message AI ko jaata hai
 #   4. call_log mein likhta hai ki tool chala
 # ============================================
+_action_ids = itertools.count(1)     # UI ke Activity panel ke liye har kaam ka alag number
+
+
 def tool(message, needs=None):
     def decorator(func):
         @functools.wraps(func)     # Gemini ko asli function ka naam/docstring dikhe
         def wrapper(*args, **kwargs):
             ui.set_state("thinking")
+            aid = next(_action_ids)
+            # Activity panel: title = tool ka message ("Opening chrome"), detail = arguments
+            try:
+                values = inspect.signature(func).bind(*args, **kwargs).arguments
+            except TypeError:
+                values = {}
+            # "Searching web: {query}..." -> title "Searching web", detail = query
+            # "Opening {name}..."        -> title "Opening chrome", detail = tool ka naam
+            try:
+                filled = message.format(**values).rstrip(". ")
+            except (KeyError, IndexError):
+                filled = message.split("{")[0].rstrip(". ")
+            if ":" in filled:
+                title, detail = (p.strip() for p in filled.split(":", 1))
+            else:
+                title, detail = filled, func.__name__.replace("_", " ")
+            title, detail = (title or func.__name__)[:40], detail[:60]
 
             # --- Safety lock: kya Krish ne abhi ye kaam maanga hai? ---
             if needs and not _asked_for(needs):
                 ui.log(f"BLOCKED {func.__name__}: current message did not ask for it")
+                ui.action(aid, title, "Blocked (safety lock)", "failed")
                 result = (f"BLOCKED for safety: Krish's current message did not ask for "
                           f"{func.__name__}. Do NOT call it again. Just answer Krish's "
                           f"current message normally.")
@@ -136,15 +158,21 @@ def tool(message, needs=None):
 
             try:
                 # message mein {name} jaisi jagah ho to asli value bhar do
-                values = inspect.signature(func).bind(*args, **kwargs).arguments
                 ui.log(message.format(**values))
-            except (KeyError, IndexError, TypeError):
-                ui.log(message.split(":")[0].split("{")[0].strip() + "...")
+            except (KeyError, IndexError):
+                ui.log(title + "...")
+            ui.action(aid, title, detail, "running")
             try:
                 result = func(*args, **kwargs)
             except Exception as e:
                 ui.log(f"Error: {e}")
                 result = f"Error while running {func.__name__}: {e}"
+            except BaseException:
+                # DirectReply (jaise "cancel kar diya") - kaam poora hua, jawab seedha jaata hai
+                ui.action(aid, title, detail, "done")
+                raise
+            failed = str(result).startswith(("Error", "BLOCKED", "Could not"))
+            ui.action(aid, title, detail if not failed else str(result)[:60], "failed" if failed else "done")
             call_log.append((func.__name__, result))
             return result
         return wrapper
@@ -526,6 +554,8 @@ def get_weather(city: str) -> str:
         "min": round(day["temperature_2m_min"][0]), "max": round(day["temperature_2m_max"][0]),
         "rain": day["precipitation_probability_max"][0],
     }
+    # UI ka Weather panel update karo
+    ui.set_weather(last_weather["city"], last_weather["temp"], last_weather["desc"])
 
     return (f"{place['name']}, {place.get('country', '')}: "
             f"{WEATHER_CODES.get(now['weather_code'], 'unknown')}, "
