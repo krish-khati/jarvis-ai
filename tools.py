@@ -707,6 +707,8 @@ def _open_chat(name):
     if not found:
         whatsapp.step("Searching WhatsApp", "Koi result nahi", "failed", sid)
         whatsapp.clear_search(win)
+        if whatsapp.search_error:
+            raise DirectReply(f"Sir, WhatsApp search nahi chal paya ({whatsapp.search_error}). Kuch nahi bheja.", ok=False)
         raise DirectReply(f"Sir, WhatsApp mein '{name}' naam nahi mila. Kuch nahi bheja.", ok=False)
     whatsapp.step("Searching WhatsApp", f"{len(found)} result", "done", sid)
 

@@ -157,19 +157,44 @@ def log(step_name, t0, ok, extra=""):
 def _has_focus(*wrappers):
     """Keyboard focus in me se kisi element pe hai? Paste/Enter se PEHLE ye check hota hai -
     taaki naam galti se message box mein na chala jaaye (pehle "zzqxvjarvis" draft ban gaya tha)."""
-    from pywinauto.uia_defines import IUIA
-    iuia = IUIA().iuia
-    try:
-        focused = iuia.GetFocusedElement()
-    except Exception:
+    # Windows ka global "focused element" WebView ke andar nahi jaata (poora page ek Pane dikhta
+    # hai), isliye element ki apni HasKeyboardFocus padhte hain - aur WhatsApp hi saamne ho.
+    import ctypes
+    win = _cache["win"]
+    if win is None or ctypes.windll.user32.GetForegroundWindow() != win.handle:
         return False
     for w in wrappers:
         try:
-            if w is not None and iuia.CompareElements(focused, w.element_info.element):
+            if w is not None and w.element_info.element.CurrentHasKeyboardFocus:
                 return True
         except Exception:
             continue
     return False
+
+
+def desktop_ready():
+    """PC unlocked hai? Lock screen pe mouse chal hi nahi sakta - SetCursorPos atak jaata hai
+    (test mein PC khud lock hua aur click hamesha ke liye ruk gaya tha)."""
+    import ctypes
+    from ctypes import wintypes
+    u = ctypes.windll.user32
+    u.OpenInputDesktop.restype = wintypes.HANDLE
+    h = u.OpenInputDesktop(0, False, 0x0100)          # DESKTOP_SWITCHDESKTOP
+    if not h:
+        return False
+    try:
+        buf = ctypes.create_unicode_buffer(64)
+        u.GetUserObjectInformationW(wintypes.HANDLE(h), 2, buf, ctypes.sizeof(buf), None)   # UOI_NAME
+        return buf.value.lower() == "default"         # Lock pe "Winlogon" hota hai
+    finally:
+        u.CloseDesktop(wintypes.HANDLE(h))
+
+
+def _click(element):
+    """Safe click: PC lock ho to click nahi (RuntimeError, hang nahi)."""
+    if not desktop_ready():
+        raise RuntimeError("PC lock hai - WhatsApp pe click nahi ho sakta")
+    element.click_input()
 
 
 # ---------------- Search ----------------
@@ -196,7 +221,7 @@ def clear_search(win):
     try:
         box = _search_box(win, timeout=2)
         if not _has_focus(box):
-            box.click_input()
+            _click(box)
             time.sleep(0.15)
         send_keys("^a{BACKSPACE}{ESC}" if _has_focus(box) else "{ESC}")
     except Exception:
@@ -221,11 +246,16 @@ def _search_box(win, timeout=10):
     raise RuntimeError("WhatsApp ka search box nahi mila")
 
 
+search_error = None          # Search technical wajah se fail hua (focus/typing) to yahan - "naam nahi mila" nahi
+
+
 def search(query):
     """Search box mein naam likho; chat results ki list do: [(title, row_wrapper), ...].
     Naam SIRF tab paste hota hai jab keyboard focus pakka search box pe ho. Ek hi baar
     likhte hain - fail pe search saaf karke khaali list (dobara type nahi)."""
+    global search_error
     from pywinauto.keyboard import send_keys
+    search_error = None
     t = time.time()
     win = _window()
     doc = _doc(win)
@@ -233,11 +263,12 @@ def search(query):
     log("window + search box", t, True)
 
     t = time.time()
-    box.click_input()
+    _click(box)
     time.sleep(0.15)
     if not _has_focus(box):
         send_keys("{ESC}")
         log("search box pe focus", t, False, "(kuch type nahi kiya)")
+        search_error = "search box pe focus nahi aaya"
         return win, []
     send_keys("^a{BACKSPACE}")          # Purana text saaf
     _paste(query)
@@ -252,6 +283,7 @@ def search(query):
         time.sleep(0.15)
     log("naam search box mein", t, typed)
     if not typed:
+        search_error = "search box mein naam nahi likh paya"
         clear_search(win)
         return win, []
 
@@ -417,7 +449,7 @@ def open_result(win, row, expected, methods=("keyboard", "click"), how="down"):
         if method == "keyboard":
             pressed = _press_enter_on(row, how)
         else:
-            (_title_item(row) or row).click_input()
+            _click(_title_item(row) or row)
             pressed = True
         title, box = _wait_open(win, expected) if pressed else (None, None)
         log(f"chat khuli? #{attempt} {method}", t, bool(title),
@@ -427,15 +459,15 @@ def open_result(win, row, expected, methods=("keyboard", "click"), how="down"):
     return None, None, None
 
 
-def open_self(win, methods=("keyboard", "click")):
-    """Apni "(You)" chat: search NAHI ("You" se "Yash" jaise naam bhi aate) - Chat list mein
-    sabse upar pinned hoti hai, wahin se kholo. Return (title, box, method) ya (None, None, None)."""
+def open_self(win, methods=("click", "keyboard")):
+    """Apni "(You)" chat: search NAHI ("You" se "Yash" jaise naam bhi aate) - Chat list
+    mein dhoondh ke wahin se kholo. Return (title, box, method) ya (None, None, None)."""
     t = time.time()
     doc = _doc(win)
     grid = next((g for g in doc.descendants(control_type="DataGrid")
                  if (g.element_info.name or "").strip() == CHAT_LIST), None)
     row = None
-    for r in (grid.children()[:5] if grid else []):
+    for r in (grid.children() if grid else []):   # Pinned nahi - list mein upar-neeche hoti hai
         if any("(You)" in (d.element_info.name or "") for d in [r] + r.descendants(control_type="DataItem")):
             row = r
             break
@@ -461,7 +493,7 @@ def send_in_open_chat(win, box, message):
     from pywinauto.keyboard import send_keys
     snippet = message.strip()[:25]
     before = _count_in_chat(win, snippet)
-    box.click_input()
+    _click(box)
     time.sleep(0.15)
     if not _has_focus(box):              # Focus message box pe nahi -> kuch type nahi
         return False
@@ -495,7 +527,7 @@ def press_call(win, video=False):
     if btn is None:
         menu = _header_button(win, CALL_MENU, timeout=2)
         if menu is not None:
-            menu.click_input()
+            _click(menu)
             time.sleep(0.8)
             doc = _doc(win)
             for e in doc.descendants():
@@ -504,7 +536,7 @@ def press_call(win, video=False):
                     break
     if btn is None:
         raise RuntimeError(("Video" if video else "Voice") + " call button nahi mila")
-    btn.click_input()
+    _click(btn)
 
 
 def end_call():
@@ -516,7 +548,7 @@ def end_call():
                 continue
             for b in w.descendants(control_type="Button"):
                 if END_CALL.search((b.element_info.name or "").strip()):
-                    b.click_input()
+                    _click(b)
                     return True
         except Exception:
             continue
