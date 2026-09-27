@@ -688,9 +688,22 @@ def _open_chat(name):
     import whatsapp
     wanted = name.strip().lower()
     self_chat = wanted in _SELF
-    sid = whatsapp.step("Searching WhatsApp", "(You)" if self_chat else name, "running")
-    win, results = whatsapp.search(whatsapp.SELF_QUERY if self_chat else name)
-    found = whatsapp._best(results, name, self_chat)
+    if self_chat:
+        # Apni chat search se NAHI ("You" se "Yash" bhi aata) - chat list mein sabse upar se
+        sid = whatsapp.step("Opening chat", "(You)", "running")
+        win = whatsapp._window()
+        title, box, _ = whatsapp.open_self(win)
+        if not title:
+            whatsapp.step("Opening chat", "(You)", "failed", sid)
+            whatsapp.clear_search(win)
+            raise DirectReply("Sir, chat nahi khul payi. Kuch nahi bheja.", ok=False)
+        title = title if "(You)" in title else title + " (You)"
+        whatsapp.step("Chat opened", title, "done", sid)
+        return win, box, title
+
+    sid = whatsapp.step("Searching WhatsApp", name, "running")
+    win, results = whatsapp.search(name)
+    found = whatsapp._best(results, name)
     if not found:
         whatsapp.step("Searching WhatsApp", "Koi result nahi", "failed", sid)
         whatsapp.clear_search(win)
@@ -706,19 +719,12 @@ def _open_chat(name):
             whatsapp.clear_search(win)
             raise DirectReply("Theek hai sir, koi chat nahi kholi. Kuch nahi bheja.", ok=False)
 
-    title, box = whatsapp.open_result(win, choice[1], choice[0])
-    if not title:
-        # List click ke waqt dobara render ho rahi ho to click khisak jaata hai - ek baar phir koshish
-        win, again = whatsapp.search(whatsapp.SELF_QUERY if self_chat else name)
-        same = [r for r in whatsapp._best(again, name, self_chat) if r[0] == choice[0]]
-        if same:
-            title, box = whatsapp.open_result(win, same[0][1], choice[0])
+    # Max 2 koshish (keyboard Down+Enter, phir click) - dobara search/type nahi
+    title, box, _ = whatsapp.open_result(win, choice[1], choice[0])
     if not title:
         whatsapp.step("Opening chat", choice[0][:40], "failed")
         whatsapp.clear_search(win)
-        raise DirectReply("Sir, chat khul nahi payi. Kuch nahi bheja.", ok=False)
-    if self_chat and "(You)" not in title:
-        title += " (You)"
+        raise DirectReply("Sir, chat nahi khul payi. Kuch nahi bheja.", ok=False)
     whatsapp.step("Chat opened", title, "done")
     return win, box, title
 

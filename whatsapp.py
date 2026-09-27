@@ -35,6 +35,8 @@ SKIP_SECTIONS = {"messages"}
 _DATE_TAIL = re.compile(r"\s+(\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}:\d{2}(\s?[ap]\.?m\.?)?|yesterday|today|"
                         r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)$", re.IGNORECASE)
 SELF_QUERY = "You"          # Apni chat "+91 ... (You)" - "You" search karne pe milti hai
+CHAT_LIST = "Chat list"    # Left side ki chat list (apni "(You)" chat isme sabse upar pinned)
+MAX_OPEN_TRIES = 2         # Chat kholne ki max koshish - kabhi bina limit ke retry nahi
 
 _step_ids = iter(range(1, 10**9))
 
@@ -52,34 +54,79 @@ def step(title, detail, status, sid=None):
 
 
 # ---------------- Window / elements ----------------
+_cache = {"win": None, "doc": None, "doc_for": None}   # Window aur page ek baar dhoondh ke yaad
+
+
+def _alive(wrapper):
+    """Cached element abhi bhi zinda hai? (Window band / page reload hua to exception)"""
+    try:
+        wrapper.element_info.element.CurrentBoundingRectangle
+        return wrapper.element_info.element.CurrentProcessId != 0
+    except Exception:
+        return False
+
+
+def _is_wa(w):
+    return w.class_name() == "WinUIDesktopWin32WindowClass" and re.search(r"(?i)\bwhatsapp$", w.window_text() or "")
+
+
 def _window():
-    """WhatsApp kholo (band/tray mein ho to bhi) aur main window ka spec do.
-    Title "(10) WhatsApp" jaisa hota hai - unread ginti aage lagti hai."""
+    """WhatsApp kholo (band/tray mein ho to bhi) aur main window ka wrapper do.
+    Title "(10) WhatsApp" jaisa hota hai - unread ginti aage lagti hai.
+    Window cached: pehle se khuli + dikh rahi ho to startfile/scan nahi (bas focus)."""
     from pywinauto import Desktop
-    os.startfile(APP_ID)
+    w = _cache["win"]
+    try:
+        if w is not None and _alive(w) and w.is_visible() and _is_wa(w):
+            if w.is_minimized():
+                w.restore()
+            w.set_focus()
+            return w
+    except Exception:
+        pass
+    _cache["win"] = None
+    os.startfile(APP_ID)                 # Tray mein chhupi ho to bhi saamne aati hai
     deadline = time.time() + 20
     while time.time() < deadline:
         for w in Desktop(backend="uia").windows():
             try:
-                if w.class_name() == "WinUIDesktopWin32WindowClass" and re.search(r"(?i)\bwhatsapp$", w.window_text() or ""):
+                if _is_wa(w):
                     if w.is_minimized():
                         w.restore()
                     w.set_focus()
-                    return Desktop(backend="uia").window(handle=w.handle)
+                    _cache["win"] = w
+                    return w
             except Exception:
                 continue
-        time.sleep(0.5)
+        time.sleep(0.3)
     raise RuntimeError("WhatsApp Desktop ki window nahi khuli (install/login hai?)")
 
 
-def _doc(win):
-    """WebView ka page (Document) - seedha descendants se. child_window(...) spec se
-    dhoondhna har baar ~6 second leta tha (isi se search 25+ second ka ho jaata tha)."""
-    root = win.wrapper_object() if hasattr(win, "wrapper_object") else win
-    for d in root.descendants(control_type="Document"):
-        if d.element_info.automation_id == "RootWebArea":
-            return d
-    raise RuntimeError("WhatsApp ka page (RootWebArea) nahi mila")
+def _doc(win, timeout=10):
+    """WebView ka page (Document "RootWebArea"). Native UIA FindFirst se ~0.05s -
+    pywinauto descendants()/child_window() se ye ~6s leta tha (search 20+ second ka tha).
+    Page cached rehta hai; window badli ya page reload hua to dobara dhoondhte hain."""
+    from pywinauto.controls.uiawrapper import UIAWrapper
+    from pywinauto.uia_defines import IUIA
+    from pywinauto.uia_element_info import UIAElementInfo
+    doc = _cache["doc"]
+    if doc is not None and _cache["doc_for"] == win.handle and _alive(doc):
+        return doc
+    iuia = IUIA()
+    cond = iuia.iuia.CreatePropertyCondition(iuia.UIA_dll.UIA_AutomationIdPropertyId, "RootWebArea")
+    deadline = time.time() + timeout
+    while True:
+        try:
+            el = win.element_info.element.FindFirst(iuia.tree_scope["descendants"], cond)
+            if el:
+                doc = UIAWrapper(UIAElementInfo(el))
+                _cache.update(doc=doc, doc_for=win.handle)
+                return doc
+        except Exception:
+            pass
+        if time.time() > deadline:
+            raise RuntimeError("WhatsApp ka page (RootWebArea) nahi mila")
+        time.sleep(0.3)                  # App abhi khul rahi hai - page load hone do
 
 
 def _paste(text):
@@ -101,6 +148,30 @@ def _paste(text):
             pass
 
 
+def log(step_name, t0, ok, extra=""):
+    """Terminal mein har step ka time aur result (naam/number nahi - sirf step + ginti)."""
+    print(f"[WA] {step_name:<24} {time.time() - t0:5.2f}s  {'OK' if ok else 'FAIL'} {extra}".rstrip())
+    return ok
+
+
+def _has_focus(*wrappers):
+    """Keyboard focus in me se kisi element pe hai? Paste/Enter se PEHLE ye check hota hai -
+    taaki naam galti se message box mein na chala jaaye (pehle "zzqxvjarvis" draft ban gaya tha)."""
+    from pywinauto.uia_defines import IUIA
+    iuia = IUIA().iuia
+    try:
+        focused = iuia.GetFocusedElement()
+    except Exception:
+        return False
+    for w in wrappers:
+        try:
+            if w is not None and iuia.CompareElements(focused, w.element_info.element):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 # ---------------- Search ----------------
 def _title_item(row):
     """Row ke andar SIRF "naam + date" wala chhota element (sabse chhota naam).
@@ -119,12 +190,15 @@ def _result_title(row):
 
 
 def clear_search(win):
-    """Search box saaf karo (purana naam na pada rahe)."""
+    """Search box saaf karke Esc. Keys SIRF tab jab focus pakka search box pe ho -
+    warna sirf Esc (message box mein kabhi kuch type nahi hona chahiye)."""
     from pywinauto.keyboard import send_keys
     try:
-        box = _search_box(win, timeout=3)
-        box.click_input()
-        send_keys("^a{BACKSPACE}{ESC}")
+        box = _search_box(win, timeout=2)
+        if not _has_focus(box):
+            box.click_input()
+            time.sleep(0.15)
+        send_keys("^a{BACKSPACE}{ESC}" if _has_focus(box) else "{ESC}")
     except Exception:
         pass
 
@@ -143,38 +217,64 @@ def _search_box(win, timeout=10):
                 return min(edits, key=lambda e: e.rectangle().top)
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(0.3)
     raise RuntimeError("WhatsApp ka search box nahi mila")
 
 
 def search(query):
-    """Search box mein naam likho; chat results ki list do: [(title, row_wrapper), ...]"""
+    """Search box mein naam likho; chat results ki list do: [(title, row_wrapper), ...].
+    Naam SIRF tab paste hota hai jab keyboard focus pakka search box pe ho. Ek hi baar
+    likhte hain - fail pe search saaf karke khaali list (dobara type nahi)."""
     from pywinauto.keyboard import send_keys
+    t = time.time()
     win = _window()
     doc = _doc(win)
-    box = _search_box(win, timeout=15)
+    box = _search_box(win, timeout=10)
+    log("window + search box", t, True)
+
+    t = time.time()
     box.click_input()
+    time.sleep(0.15)
+    if not _has_focus(box):
+        send_keys("{ESC}")
+        log("search box pe focus", t, False, "(kuch type nahi kiya)")
+        return win, []
     send_keys("^a{BACKSPACE}")          # Purana text saaf
     _paste(query)
-
-    # Results tabhi padho jab (1) search box mein SAHI naam ho aur (2) list do baar
-    # lagatar same aaye - warna pichle search ke purane results padh lete (galat chat khulti)
-    deadline = time.time() + RESULTS_WAIT + 6
-    last = None
-    while time.time() < deadline:
-        time.sleep(0.6)
+    typed = False
+    for _ in range(8):                   # Box mein sahi naam aaya? (max ~1.2s)
         try:
-            typed = (box.get_value() or "").strip()
+            typed = (box.get_value() or "").strip() == query.strip()
         except Exception:
-            typed = ""
-        if typed != query.strip():
-            continue
+            typed = False
+        if typed:
+            break
+        time.sleep(0.15)
+    log("naam search box mein", t, typed)
+    if not typed:
+        clear_search(win)
+        return win, []
+
+    # Results tabhi lo jab list do baar lagatar same aaye - warna pichle search ke purane
+    # results padh lete. Khaali list tabhi maano jab RESULTS_WAIT beet jaaye.
+    t = time.time()
+    deadline = t + RESULTS_WAIT + 3
+    last, results = None, []
+    time.sleep(0.5)
+    while time.time() < deadline:
+        time.sleep(0.3)
         results = _read_results(doc)
-        titles = [t for t, _ in results]
+        titles = [x for x, _ in results]
+        if not titles and time.time() - t < RESULTS_WAIT:
+            last = None
+            continue
         if last is not None and titles == last:
-            return win, results
+            break
         last = titles
-    return win, []                       # Pakka nahi ho paya -> kuch mat kholo
+    else:
+        results = []                     # Pakka nahi ho paya -> kuch mat kholo
+    log("results", t, bool(results), f"({len(results)} rows)")
+    return win, results
 
 
 def _read_results(doc):
@@ -237,33 +337,112 @@ def _norm(name):
 
 
 def same_chat(header, result_title):
-    """Khuli chat ka header wahi hai jo result chuna tha? (Apni chat ke header mein "(You)" nahi hota.)"""
+    """Khuli chat ka naam wahi hai jo result chuna tha? (Apni chat ke header mein "(You)" nahi hota.)"""
     h, r = _norm(header), _norm(result_title)
     return bool(h and r) and (h == r or h in r or r in h)
 
 
-def open_result(win, row, expected=None):
-    """Result ke naam wale hisse pe click karke chat kholo; header se asli chat ka naam padho.
-    expected diya ho to tabhi maano jab header USI naam ka ho - warna pehle se khuli
-    (purani) chat ko "khul gayi" samajh lete. Na khule to (None, None)."""
-    (_title_item(row) or row).click_input()
-    deadline = time.time() + CHAT_OPEN_WAIT + 2
-    while time.time() < deadline:
-        time.sleep(0.5)
-        title, box = current_chat(win)
-        if title and (expected is None or same_chat(title, expected)):
-            return title, box
-    return None, None
-
-
 def current_chat(win):
-    """Khuli chat ka naam - message box "Type a message to <naam>" se (header wala hi naam)."""
+    """Message box "Type a message to <naam>" se khuli chat ka naam + box. Na ho to (None, None)."""
     doc = _doc(win)
     for e in doc.descendants(control_type="Edit"):
         m = MESSAGE_BOX.match(e.element_info.name or "")
         if m:
             return m["name"].strip(), e
     return None, None
+
+
+def _header_names(win, box):
+    """Chat header = message box wale column mein sabse upar ka chauda button (naam wala)."""
+    br = box.rectangle()
+    names = []
+    for b in _doc(win).descendants(control_type="Button"):
+        r = b.rectangle()
+        if r.top < 200 and r.left >= br.left - 60 and r.width() > 200:
+            names.append(b.element_info.name or "")
+    return names
+
+
+def opened_chat(win, expected):
+    """Chat sach mein khuli? (1) right side message box dikhe aur uska naam match ho, AUR
+    (2) upar header mein bhi wahi naam ho. Dono milein tabhi (title, box), warna (None, None)."""
+    title, box = current_chat(win)
+    if not title or not same_chat(title, expected):
+        return None, None
+    want = _norm(expected)
+    if not any(want in _norm(h) for h in _header_names(win, box)):
+        return None, None
+    return title, box
+
+
+def _wait_open(win, expected, timeout=CHAT_OPEN_WAIT + 1):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.25)
+        title, box = opened_chat(win, expected)
+        if title:
+            return title, box
+    return None, None
+
+
+def _press_enter_on(row, how):
+    """Keyboard se row kholo. Enter SIRF tab jab focus pakka isi row (ya uske andar) pe ho -
+    message box pe kabhi Enter nahi (usme draft ho to chala jaata).
+    how="down": search box se Down arrow jab tak row pe na pahunche | "focus": row pe seedha focus."""
+    from pywinauto.keyboard import send_keys
+    targets = [row] + row.descendants()
+    if how == "focus":
+        try:
+            row.set_focus()
+        except Exception:
+            pass
+        time.sleep(0.15)
+    else:
+        for _ in range(8):
+            if _has_focus(*targets):
+                break
+            send_keys("{DOWN}")
+            time.sleep(0.15)
+    if not _has_focus(*targets):
+        return False
+    send_keys("{ENTER}")
+    return True
+
+
+def open_result(win, row, expected, methods=("keyboard", "click"), how="down"):
+    """Chat kholo: har tareeka ek baar, total MAX_OPEN_TRIES (2) - kabhi bina limit ke retry
+    ya dobara search nahi. Return (title, box, method) ya (None, None, None)."""
+    for attempt, method in enumerate(methods[:MAX_OPEN_TRIES], 1):
+        t = time.time()
+        if method == "keyboard":
+            pressed = _press_enter_on(row, how)
+        else:
+            (_title_item(row) or row).click_input()
+            pressed = True
+        title, box = _wait_open(win, expected) if pressed else (None, None)
+        log(f"chat khuli? #{attempt} {method}", t, bool(title),
+            "" if pressed else "(focus row pe nahi aaya, Enter nahi dabaya)")
+        if title:
+            return title, box, method
+    return None, None, None
+
+
+def open_self(win, methods=("keyboard", "click")):
+    """Apni "(You)" chat: search NAHI ("You" se "Yash" jaise naam bhi aate) - Chat list mein
+    sabse upar pinned hoti hai, wahin se kholo. Return (title, box, method) ya (None, None, None)."""
+    t = time.time()
+    doc = _doc(win)
+    grid = next((g for g in doc.descendants(control_type="DataGrid")
+                 if (g.element_info.name or "").strip() == CHAT_LIST), None)
+    row = None
+    for r in (grid.children()[:5] if grid else []):
+        if any("(You)" in (d.element_info.name or "") for d in [r] + r.descendants(control_type="DataItem")):
+            row = r
+            break
+    log("(You) chat list mein", t, row is not None)
+    if row is None:
+        return None, None, None
+    return open_result(win, row, _result_title(row), methods, how="focus")
 
 
 # ---------------- Send ----------------
@@ -283,6 +462,9 @@ def send_in_open_chat(win, box, message):
     snippet = message.strip()[:25]
     before = _count_in_chat(win, snippet)
     box.click_input()
+    time.sleep(0.15)
+    if not _has_focus(box):              # Focus message box pe nahi -> kuch type nahi
+        return False
     send_keys("^a{BACKSPACE}")           # Pehle se pada draft saaf - warna message ke saath chala jaata
     _paste(message)
     send_keys("{ENTER}")
