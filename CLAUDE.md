@@ -66,7 +66,8 @@ WhatsApp Desktop (package `5319275A.WhatsAppDesktop`, v2.2637) is WhatsApp Web i
 - Main window class `WinUIDesktopWin32WindowClass`; title can be `(10) WhatsApp` (unread count prefix), so match `\bwhatsapp$`. When closed it hides in the tray: always `os.startfile(APP_ID)` first.
 - Search box placeholder name is `Search or start a new chat`, but **its name becomes empty when it has text**, so it is found by position (topmost Edit that is not the message box).
 - Results: `DataGrid` named `Search results.` with `DataItem` rows; section header rows `Chats` / `Contacts` / `Messages`. Rows after `Messages` are matches inside message text and must be skipped. Inside a row, the shortest-named `DataItem` is "name + date"; the long ones contain previews or the disappearing-timer text ("Change timer") and must never be clicked.
-- Open chat is identified by the message box name `Type a message to <chat name>`. The user's own chat is `+91 … (You)` and is found by searching `You`.
+- Open chat is identified by the message box name `Type a message to <chat name>` AND the chat header (wide Button at the top of the right column whose name contains the chat name). The user's own chat is `+91 … (You)`; it is NOT pinned, so it is found in the `Chat list` DataGrid (never by searching `You`, which also matches names like Yash).
+- Speed/focus facts: find the page (`RootWebArea`) with native UIA `FindFirst` (~0.05s; pywinauto `descendants()`/`child_window()` took ~6s each). The global focused element is only the WebView `Pane`, so focus is checked with the element's own `HasKeyboardFocus`. Clicking on the lock screen hangs `SetCursorPos` forever, so `_click` checks `desktop_ready()` first.
 - Empty message box value is a single `\n`.
 
 What works (DRY_RUN tests on the real app):
@@ -74,6 +75,6 @@ What works (DRY_RUN tests on the real app):
 - Incoming notifications: permission is already Allowed on this PC; announcements, "messages padho", reply flow and privacy were tested with fake notifications only.
 
 What is NOT done / not verified:
-- Real runs were **flaky**: sometimes "search box nahi mila", sometimes stale results from the previous search, once a click missed. The latest fixes in `whatsapp.py` (wait until the search box holds the query and results are stable twice; `_best` returns only names containing the query; restore minimized window; retry open once) were committed in `2a3d5f5` but **have not been run or even compiled yet**. Next step: `py_compile`, then re-run the DRY_RUN real-app test on the "(You)" chat a few times while the user is not using the mouse/keyboard.
+- Opening chats is fixed and verified (DRY_RUN, real app): own "(You)" chat 3/3 (~0.7s, click), a real contact 5/5 (~2.9s, keyboard Down+Enter and click both work), unknown name -> "naam nahi mila" with nothing typed anywhere else. Max 2 open tries, no re-search; paste/Enter only after a focus check.
 - Never tested for real (DRY_RUN only): actual send (paste + Enter + "message appeared" check), voice/video call buttons (names guessed: `Voice call`, `Video call`, or a `Call` menu; the own chat has no call buttons), end call, reading real notification text.
-- `README.md` does not describe WhatsApp yet. The last work is committed locally but **not pushed**.
+- `README.md` does not describe WhatsApp yet.
