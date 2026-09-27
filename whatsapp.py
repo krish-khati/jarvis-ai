@@ -73,7 +73,13 @@ def _window():
 
 
 def _doc(win):
-    return win.child_window(auto_id="RootWebArea", control_type="Document", found_index=0)
+    """WebView ka page (Document) - seedha descendants se. child_window(...) spec se
+    dhoondhna har baar ~6 second leta tha (isi se search 25+ second ka ho jaata tha)."""
+    root = win.wrapper_object() if hasattr(win, "wrapper_object") else win
+    for d in root.descendants(control_type="Document"):
+        if d.element_info.automation_id == "RootWebArea":
+            return d
+    raise RuntimeError("WhatsApp ka page (RootWebArea) nahi mila")
 
 
 def _paste(text):
@@ -130,7 +136,7 @@ def _search_box(win, timeout=10):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            doc = _doc(win).wrapper_object()
+            doc = _doc(win)
             edits = [e for e in doc.descendants(control_type="Edit")
                      if not MESSAGE_BOX.match(e.element_info.name or "")]
             if edits:
@@ -174,8 +180,11 @@ def search(query):
 def _read_results(doc):
     """Results grid se chat/contact rows padho ("Messages" section wale chhod ke)."""
     try:
-        grid = doc.child_window(title=RESULTS_GRID, control_type="DataGrid", found_index=0).wrapper_object()
+        grid = next((g for g in doc.descendants(control_type="DataGrid")
+                     if (g.element_info.name or "").strip() == RESULTS_GRID), None)
     except Exception:
+        grid = None
+    if grid is None:
         return []
     results, section = [], "chats"
     for row in grid.children():
@@ -222,22 +231,34 @@ def pick(results, answer):
     return results[titles.index(close[0])] if close else None
 
 
-def open_result(win, row):
+def _norm(name):
+    """Naam compare karne ke liye: "(You)" hatao, space/case barabar karo."""
+    return re.sub(r"\s+", " ", re.sub(r"\(you\)", "", (name or "").lower())).strip()
+
+
+def same_chat(header, result_title):
+    """Khuli chat ka header wahi hai jo result chuna tha? (Apni chat ke header mein "(You)" nahi hota.)"""
+    h, r = _norm(header), _norm(result_title)
+    return bool(h and r) and (h == r or h in r or r in h)
+
+
+def open_result(win, row, expected=None):
     """Result ke naam wale hisse pe click karke chat kholo; header se asli chat ka naam padho.
-    Chat khulne ka 4 second tak intezaar (baar-baar check). Na khule to (None, None)."""
+    expected diya ho to tabhi maano jab header USI naam ka ho - warna pehle se khuli
+    (purani) chat ko "khul gayi" samajh lete. Na khule to (None, None)."""
     (_title_item(row) or row).click_input()
     deadline = time.time() + CHAT_OPEN_WAIT + 2
     while time.time() < deadline:
         time.sleep(0.5)
         title, box = current_chat(win)
-        if title:
+        if title and (expected is None or same_chat(title, expected)):
             return title, box
     return None, None
 
 
 def current_chat(win):
     """Khuli chat ka naam - message box "Type a message to <naam>" se (header wala hi naam)."""
-    doc = _doc(win).wrapper_object()
+    doc = _doc(win)
     for e in doc.descendants(control_type="Edit"):
         m = MESSAGE_BOX.match(e.element_info.name or "")
         if m:
@@ -248,7 +269,7 @@ def current_chat(win):
 # ---------------- Send ----------------
 def _count_in_chat(win, snippet):
     """Chat mein kitne elements ke naam mein ye text hai (bhejne se pehle/baad compare)."""
-    doc = _doc(win).wrapper_object()
+    doc = _doc(win)
     n = 0
     for e in doc.descendants():
         if snippet in (e.element_info.name or ""):
@@ -262,6 +283,7 @@ def send_in_open_chat(win, box, message):
     snippet = message.strip()[:25]
     before = _count_in_chat(win, snippet)
     box.click_input()
+    send_keys("^a{BACKSPACE}")           # Pehle se pada draft saaf - warna message ke saath chala jaata
     _paste(message)
     send_keys("{ENTER}")
     for _ in range(10):                  # 5 second tak dekho
@@ -275,7 +297,7 @@ def send_in_open_chat(win, box, message):
 def _header_button(win, pattern, timeout=5):
     """Chat header (upar) mein naam se button dhoondho."""
     deadline = time.time() + timeout
-    doc = _doc(win).wrapper_object()
+    doc = _doc(win)
     while time.time() < deadline:
         for b in doc.descendants(control_type="Button"):
             if pattern.search((b.element_info.name or "").strip()):
@@ -293,7 +315,7 @@ def press_call(win, video=False):
         if menu is not None:
             menu.click_input()
             time.sleep(0.8)
-            doc = _doc(win).wrapper_object()
+            doc = _doc(win)
             for e in doc.descendants():
                 if e.element_info.control_type in ("Button", "MenuItem") and target.search(e.element_info.name or ""):
                     btn = e

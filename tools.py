@@ -706,13 +706,13 @@ def _open_chat(name):
             whatsapp.clear_search(win)
             raise DirectReply("Theek hai sir, koi chat nahi kholi. Kuch nahi bheja.", ok=False)
 
-    title, box = whatsapp.open_result(win, choice[1])
+    title, box = whatsapp.open_result(win, choice[1], choice[0])
     if not title:
         # List click ke waqt dobara render ho rahi ho to click khisak jaata hai - ek baar phir koshish
         win, again = whatsapp.search(whatsapp.SELF_QUERY if self_chat else name)
         same = [r for r in whatsapp._best(again, name, self_chat) if r[0] == choice[0]]
         if same:
-            title, box = whatsapp.open_result(win, same[0][1])
+            title, box = whatsapp.open_result(win, same[0][1], choice[0])
     if not title:
         whatsapp.step("Opening chat", choice[0][:40], "failed")
         whatsapp.clear_search(win)
