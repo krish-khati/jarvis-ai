@@ -190,10 +190,45 @@ def desktop_ready():
         u.CloseDesktop(wintypes.HANDLE(h))
 
 
-def _click(element):
-    """Safe click: PC lock ho to click nahi (RuntimeError, hang nahi)."""
+def _bring_front(win, tries=3):
+    """WhatsApp ko sach mein foreground mein lao. Windows kabhi set_focus ko rok deta hai
+    (notification/Start khula ho) - tab Alt dabake dobara koshish. True = saamne aa gaya."""
+    import ctypes
+    from pywinauto.keyboard import send_keys
+    u = ctypes.windll.user32
+    for _ in range(tries):
+        if u.GetForegroundWindow() == win.handle:
+            return True
+        try:
+            if win.is_minimized():
+                win.restore()
+            send_keys("{VK_MENU}")       # Alt - Windows ki foreground lock hat jaati hai
+            u.SetForegroundWindow(win.handle)
+            win.set_focus()
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return u.GetForegroundWindow() == win.handle
+
+
+def _click(element, owner=None):
+    """Safe click. Click TABHI jab: PC unlocked ho, WhatsApp saamne ho, aur click wale point pe
+    sach mein WhatsApp ki window ho (upar koi aur app ho to click usi pe girta - test mein
+    Chrome pe gira tha). Warna RuntimeError - kabhi galat app pe click nahi."""
+    import ctypes
+    from ctypes import wintypes
     if not desktop_ready():
         raise RuntimeError("PC lock hai - WhatsApp pe click nahi ho sakta")
+    win = owner or _cache["win"]          # owner = call jaisi alag WhatsApp window
+    if win is None or not _bring_front(win):
+        raise RuntimeError("WhatsApp saamne nahi aa paya - click nahi kiya")
+    r = element.rectangle()
+    u = ctypes.windll.user32
+    u.WindowFromPoint.restype = wintypes.HWND
+    u.GetAncestor.restype = wintypes.HWND
+    hwnd = u.WindowFromPoint(wintypes.POINT(r.mid_point().x, r.mid_point().y))
+    if not hwnd or u.GetAncestor(hwnd, 2) != win.handle:          # GA_ROOT
+        raise RuntimeError("Click wali jagah pe WhatsApp nahi, koi aur window hai - click nahi kiya")
     element.click_input()
 
 
@@ -540,16 +575,26 @@ def press_call(win, video=False):
 
 
 def end_call():
-    """Chal rahi WhatsApp call kaato: kisi bhi WhatsApp window mein 'End call' button."""
+    """Chal rahi WhatsApp call kaato: WhatsApp ke process ki kisi bhi window mein 'End call' button.
+    Call ki window alag top-level window hoti hai (title mein "WhatsApp" ho ya na ho)."""
     from pywinauto import Desktop
-    for w in Desktop(backend="uia").windows():
+    wins = Desktop(backend="uia").windows()
+    pids = {w.process_id() for w in wins if _safe_is_wa(w)}
+    for w in wins:
         try:
-            if "whatsapp" not in (w.window_text() or "").lower():
+            if w.process_id() not in pids and "whatsapp" not in (w.window_text() or "").lower():
                 continue
             for b in w.descendants(control_type="Button"):
                 if END_CALL.search((b.element_info.name or "").strip()):
-                    _click(b)
+                    _click(b, owner=w)
                     return True
         except Exception:
             continue
     return False
+
+
+def _safe_is_wa(w):
+    try:
+        return bool(_is_wa(w))
+    except Exception:
+        return False

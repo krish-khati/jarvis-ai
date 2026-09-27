@@ -76,5 +76,5 @@ What works (DRY_RUN tests on the real app):
 
 What is NOT done / not verified:
 - Opening chats is fixed and verified (DRY_RUN, real app): own "(You)" chat 3/3 (~0.7s, click), a real contact 5/5 (~2.9s, keyboard Down+Enter and click both work), unknown name -> "naam nahi mila" with nothing typed anywhere else. Max 2 open tries, no re-search; paste/Enter only after a focus check.
-- Real send verified once (2026-09-27, to a real contact: paste + Enter + "message appeared" check OK). Never tested for real (DRY_RUN only): voice/video call buttons (names guessed: `Voice call`, `Video call`, or a `Call` menu; the own chat has no call buttons), end call, reading real notification text.
+- Real send verified once (2026-09-27, to a real contact: paste + Enter + "message appeared" check OK). Real voice call + end call verified once: header buttons are `Video call` / `Voice call` (own chat has none); the call opens a separate WhatsApp window with `End call`, found by process id. `_click` refuses to click unless WhatsApp (or the given owner window) is in front and under the click point. Not tested for real: video call, reading real notification text.
 - `README.md` does not describe WhatsApp yet.
