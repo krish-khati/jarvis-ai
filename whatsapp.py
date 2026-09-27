@@ -249,6 +249,19 @@ def _result_title(row):
     return _DATE_TAIL.sub("", text).strip()
 
 
+def _focus_by_click(element, clicks=2, wait=1.0):
+    """Click karke focus lo; har click ke baad 1s tak focus ka intezaar. Max 2 click, bas.
+    (WhatsApp tray/peeche se abhi aaya ho to focus aane mein 0.15s se zyada lagta hai.)"""
+    for _ in range(clicks):
+        _click(element)
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            time.sleep(0.1)
+            if _has_focus(element):
+                return True
+    return False
+
+
 def clear_search(win):
     """Search box saaf karke Esc. Keys SIRF tab jab focus pakka search box pe ho -
     warna sirf Esc (message box mein kabhi kuch type nahi hona chahiye)."""
@@ -298,9 +311,7 @@ def search(query):
     log("window + search box", t, True)
 
     t = time.time()
-    _click(box)
-    time.sleep(0.15)
-    if not _has_focus(box):
+    if not _focus_by_click(box):
         send_keys("{ESC}")
         log("search box pe focus", t, False, "(kuch type nahi kiya)")
         search_error = "search box pe focus nahi aaya"
@@ -528,9 +539,7 @@ def send_in_open_chat(win, box, message):
     from pywinauto.keyboard import send_keys
     snippet = message.strip()[:25]
     before = _count_in_chat(win, snippet)
-    _click(box)
-    time.sleep(0.15)
-    if not _has_focus(box):              # Focus message box pe nahi -> kuch type nahi
+    if not _focus_by_click(box):         # Focus message box pe nahi -> kuch type nahi
         return False
     send_keys("^a{BACKSPACE}")           # Pehle se pada draft saaf - warna message ke saath chala jaata
     _paste(message)
