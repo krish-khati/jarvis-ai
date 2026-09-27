@@ -231,7 +231,10 @@ _TO = r"(?P<c>[\w .]+?) ko"
 WA_SEND = re.compile(
     _TO + r" (?:whatsapp (?:pe |par )?)?(?:message |msg |whatsapp )?"
     r"(?:bhejo|bhej do|send karo|send kar do|likh do|bol do|keh do|bata do)(?:,)? (?:ki |that )?(?P<m>.+)"
-    r"|send (?:a )?(?:whatsapp )?(?:message|msg) to (?P<c2>[\w .]+?) (?:saying|that) (?P<m2>.+)", re.IGNORECASE)
+    r"|send (?:a )?(?:whatsapp )?(?:message|msg) to (?P<c2>[\w .]+?) (?:saying|that) (?P<m2>.+)"
+    # "mujhe message bhejo ki ..." / "khud ko bhejo ..." -> apni (You) chat
+    r"|(?P<c3>mujhe|mujhko|khud ko|apne aap ko) (?:whatsapp )?(?:message |msg )?"
+    r"(?:bhejo|bhej do|send karo|send kar do)(?:,)? (?:ki |that )?(?P<m3>.+)", re.IGNORECASE)
 WA_CALL = re.compile(
     _TO + r" (?P<w>whatsapp )?(?P<v>video )?(?P<k>call|phone call|phone|audio call|voice call) "
     r"(?:karo|kar do|lagao|laga do|milao|mila do)"
@@ -277,15 +280,16 @@ def _whatsapp_command(command, text):
 
     m = WA_SEND.fullmatch(raw)
     if m:
-        contact, message = (m["c"] or m["c2"]).strip(), (m["m"] or m["m2"]).strip()
+        if m["c3"]:
+            contact, message = "khud", m["m3"].strip()          # Apni (You) chat
+        else:
+            contact, message = (m["c"] or m["c2"]).strip(), (m["m"] or m["m2"]).strip()
         return tools.send_whatsapp(contact, message)
 
     m = WA_CALL.fullmatch(raw)
     if m:
+        # "call karo" / "phone karo" dono = WhatsApp call ("video" ho to video call)
         contact = (m["c"] or m["c2"] or "").strip()
-        kind = (m["k"] or "").lower()
-        if kind.startswith("phone") and not m["w"]:
-            return tools.phone_call(contact)          # "phone karo" / "phone call karo" = normal call
         return tools.whatsapp_call(contact, video=bool(m["v"] or m["v2"]))
     return None
 

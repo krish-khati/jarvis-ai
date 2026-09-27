@@ -642,10 +642,11 @@ def look_at_screen(question: str) -> str:
 
 
 # ============================================
-# 15. WHATSAPP + CALLS (whatsapp.py, contacts.py, notifications.py)
-#   - Hamesha pehle confirm, DRY_RUN mein sirf print
-#   - Number kabhi pura print nahi hota (sirf aakhri 4 ank)
-#   - Message ka text terminal log mein nahi jaata
+# 15. WHATSAPP + CALLS (whatsapp.py, notifications.py) - koi number file nahi
+#   - Contact WhatsApp Desktop ke search se dhoondhte hain (jaise insaan)
+#   - Chat khulne pe header ka naam padh ke confirm, tabhi bhejna/call
+#   - DRY_RUN: search + chat kholna chalta hai, Enter / call button NAHI
+#   - Message ka text terminal log mein nahi jaata; naam mein number ho to masked
 # ============================================
 _YES = {"haan", "han", "ha", "haa", "yes", "yeah", "yep", "ok", "okay", "bhejo", "bhej", "send",
         "pakka", "theek", "sure", "sahi", "हां", "हाँ"}
@@ -653,21 +654,9 @@ _NO = {"nahi", "nahin", "no", "mat", "cancel", "ruko", "rehne", "नहीं"}
 _EDIT = {"polite", "english", "hindi", "hinglish", "formal", "casual", "chhota", "short", "lamba",
          "badal", "badlo", "change", "sudhar", "sudhaaro", "likh", "likho", "bana", "banao",
          "rewrite", "friendly", "sweet", "achha", "acchha", "aur", "add", "jodo", "hatao"}
-
-
-def _contact_or_reply(name):
-    """Contact dhoondho. Na mile / do mil jaayein to seedha jawab (DirectReply)."""
-    import contacts
-    status, found, number = contacts.find(name)
-    if status == "found":
-        return found, number
-    if status == "ambiguous":
-        raise DirectReply(f"Sir, kaunsa {name}: {' ya '.join(found)}?", ok=False)
-    if not contacts.exists():
-        raise DirectReply("Sir, abhi contacts.json file nahi hai. contacts.example.json ko copy karke "
-                          "contacts.json banaiye aur naam-number daaliye.", ok=False)
-    raise DirectReply(f"Sir, '{name}' contacts mein nahi mila. contacts.json mein unka naam aur number "
-                      f"daal dijiye - main number khud nahi banata.", ok=False)
+# "Khud ko message bhejo" / "mujhe bhejo" -> WhatsApp ki apni "(You)" chat
+_SELF = {"khud", "khud ko", "mujhe", "mujhko", "me", "myself", "self", "apne aap", "apne aap ko",
+         "you", "main", "mere ko", "apni chat", "khud ki chat"}
 
 
 def _answer_kind(answer):
@@ -684,12 +673,62 @@ def _answer_kind(answer):
     return "no"
 
 
-def _confirm_message(name, message):
-    """"Mom ko bhejun: '...'? Haan ya nahi" - haan pe message, nahi pe None.
+def _shown(title):
+    """Bolne/dikhane ke liye chat ka naam: apni chat = "aapki apni (You)",
+    unsaved number = "number ...1154" (pura number kabhi nahi, "star star" bhi nahi)."""
+    import whatsapp
+    if "(You)" in title:
+        return "aapki apni (You)"
+    return whatsapp.mask(title).replace("***", "number ...")
+
+
+def _open_chat(name):
+    """WhatsApp mein naam search karo aur sahi chat kholo. Return: (window, message_box, title).
+    Na mile / cancel ho to DirectReply (kuch bheja nahi jaata)."""
+    import whatsapp
+    wanted = name.strip().lower()
+    self_chat = wanted in _SELF
+    sid = whatsapp.step("Searching WhatsApp", "(You)" if self_chat else name, "running")
+    win, results = whatsapp.search(whatsapp.SELF_QUERY if self_chat else name)
+    found = whatsapp._best(results, name, self_chat)
+    if not found:
+        whatsapp.step("Searching WhatsApp", "Koi result nahi", "failed", sid)
+        whatsapp.clear_search(win)
+        raise DirectReply(f"Sir, WhatsApp mein '{name}' naam nahi mila. Kuch nahi bheja.", ok=False)
+    whatsapp.step("Searching WhatsApp", f"{len(found)} result", "done", sid)
+
+    choice = found[0]
+    if len(found) > 1:
+        titles = [_shown(t) for t, _ in found[:5]]
+        answer = ask_user(f"Sir, {len(found)} {name} mile: {', '.join(titles)}. Kaunsa?")
+        choice = whatsapp.pick(found[:5], answer)
+        if choice is None:
+            whatsapp.clear_search(win)
+            raise DirectReply("Theek hai sir, koi chat nahi kholi. Kuch nahi bheja.", ok=False)
+
+    title, box = whatsapp.open_result(win, choice[1])
+    if not title:
+        # List click ke waqt dobara render ho rahi ho to click khisak jaata hai - ek baar phir koshish
+        win, again = whatsapp.search(whatsapp.SELF_QUERY if self_chat else name)
+        same = [r for r in whatsapp._best(again, name, self_chat) if r[0] == choice[0]]
+        if same:
+            title, box = whatsapp.open_result(win, same[0][1])
+    if not title:
+        whatsapp.step("Opening chat", choice[0][:40], "failed")
+        whatsapp.clear_search(win)
+        raise DirectReply("Sir, chat khul nahi payi. Kuch nahi bheja.", ok=False)
+    if self_chat and "(You)" not in title:
+        title += " (You)"
+    whatsapp.step("Chat opened", title, "done")
+    return win, box, title
+
+
+def _confirm_message(title, message):
+    """"Rahul Sharma ki chat khuli hai. Bhejun: '...'?" - haan pe message, nahi pe None.
     "Polite bana do" / "English mein likh do" -> AI se sudhaar ke DOBARA poochho (max 3 baar)."""
     import brain
     for _ in range(4):
-        answer = ask_user(f"{name} ko bhejun: '{message}'? Haan ya nahi")
+        answer = ask_user(f"{_shown(title)} ki chat khuli hai. Bhejun: '{message}'? Haan ya nahi")
         kind = _answer_kind(answer)
         if kind == "yes":
             return message
@@ -702,56 +741,45 @@ def _confirm_message(name, message):
 
 @tool("Sending WhatsApp: {contact}...", needs=MSG_WORDS)
 def send_whatsapp(contact: str, message: str) -> str:
-    """Send a WhatsApp message to a saved contact (name from contacts, e.g. 'Mom', 'Rahul').
-    Krish is ALWAYS asked to confirm first (and can ask to rewrite it). Pass the message
-    exactly as Krish said it. Never invent a phone number."""
-    import contacts
-    name, number = _contact_or_reply(contact)
-    ui.log(f"WhatsApp -> {name} ({contacts.mask(number)})")
-    final = _confirm_message(name, message.strip())
+    """Send a WhatsApp message. contact = the chat name as Krish said it (e.g. 'Rahul', 'Mom'),
+    or 'khud' for Krish's own (You) chat. JARVIS searches WhatsApp Desktop, opens the chat,
+    reads its name and asks Krish to confirm before sending. Pass the message as Krish said it."""
+    import whatsapp
+    win, box, title = _open_chat(contact)
+    final = _confirm_message(title, message.strip())
     if not final:
         raise DirectReply("Theek hai sir, message nahi bheja.", ok=False)
     if DRY_RUN:
-        _dry_run(f"send WhatsApp to {name} ({contacts.mask(number)}), {len(final)} characters")
-        raise DirectReply(f"Test mode hai sir, {name} ko message sach mein nahi bheja.")
-    import whatsapp
-    whatsapp.send_message(number, final)
-    import notifications
-    notifications.mark_read(name)
-    raise DirectReply(f"Bhej diya, sir. {name} ko message chala gaya.")
+        _dry_run(f"paste message ({len(final)} characters) + Enter in chat '{whatsapp.mask(title)}'")
+        whatsapp.step("Send (DRY RUN)", title, "done")
+        raise DirectReply(f"Test mode hai sir. {_shown(title)} ki chat khuli, par message nahi bheja.")
+    sid = whatsapp.step("Sending", title, "running")
+    if whatsapp.send_in_open_chat(win, box, final):
+        whatsapp.step("Sent", title, "done", sid)
+        import notifications
+        notifications.mark_read(title)
+        raise DirectReply(f"Bhej diya, sir. Message {_shown(title)} ki chat mein dikh raha hai.")
+    whatsapp.step("Sent?", "Chat mein nahi dikha", "failed", sid)
+    raise DirectReply("Sir, Enter daba diya par message chat mein dikha nahi. WhatsApp khud check kar lijiye.", ok=False)
 
 
 @tool("WhatsApp call: {contact}...", needs=CALL_WORDS)
 def whatsapp_call(contact: str, video: bool = False) -> str:
-    """Start a WhatsApp voice call (video=False) or video call (video=True) to a saved contact.
-    Krish is asked to confirm first."""
-    import contacts
-    name, number = _contact_or_reply(contact)
-    kind = "video call" if video else "call"
-    if not confirm(f"Sir, {name} ko WhatsApp {kind} karun?"):
+    """Start a WhatsApp voice call (video=False) or video call (video=True). contact = chat name
+    as Krish said it. JARVIS opens the chat, reads its name and asks Krish to confirm first."""
+    import whatsapp
+    kind = "video call" if video else "voice call"
+    win, box, title = _open_chat(contact)
+    if not confirm(f"{_shown(title)} ki chat khuli hai. {kind.capitalize()} karun?"):
         raise DirectReply(f"Theek hai sir, {kind} nahi kiya.", ok=False)
     if DRY_RUN:
-        _dry_run(f"WhatsApp {kind} to {name} ({contacts.mask(number)})")
-        raise DirectReply(f"Test mode hai sir, {name} ko {kind} sach mein nahi lagaya.")
-    import whatsapp
-    whatsapp.call(number, video=bool(video))
-    raise DirectReply(f"{name} ko WhatsApp {kind} laga raha hoon, sir.")
-
-
-@tool("Phone call: {contact}...", needs=CALL_WORDS)
-def phone_call(contact: str) -> str:
-    """Start a normal phone (SIM) call to a saved contact through Windows Phone Link.
-    Use only when Krish says phone call / normal call. Krish is asked to confirm first."""
-    import contacts
-    name, number = _contact_or_reply(contact)
-    if not confirm(f"Sir, {name} ko phone call karun?"):
-        raise DirectReply("Theek hai sir, call nahi kiya.", ok=False)
-    if DRY_RUN:
-        _dry_run(f"Phone Link call to {name} ({contacts.mask(number)})")
-        raise DirectReply(f"Test mode hai sir, {name} ko phone call sach mein nahi kiya.")
-    import whatsapp
-    whatsapp.phone_call(number)
-    raise DirectReply(f"{name} ko Phone Link se call laga raha hoon, sir. Phone Link mein Call button dabana pad sakta hai.")
+        _dry_run(f"press WhatsApp '{kind}' button in chat '{whatsapp.mask(title)}'")
+        whatsapp.step(f"{kind.capitalize()} (DRY RUN)", title, "done")
+        raise DirectReply(f"Test mode hai sir. {_shown(title)} ki chat khuli, par {kind} nahi lagaya.")
+    sid = whatsapp.step(f"Starting {kind}", title, "running")
+    whatsapp.press_call(win, video=bool(video))
+    whatsapp.step(f"{kind.capitalize()} started", title, "done", sid)
+    raise DirectReply(f"{_shown(title)} ko {kind} laga raha hoon, sir.")
 
 
 @tool("Ending call...", needs=END_CALL_WORDS)
@@ -761,8 +789,9 @@ def end_call() -> str:
         _dry_run("click WhatsApp 'End call' button")
         raise DirectReply("Test mode hai sir, call sach mein nahi kaati.")
     import whatsapp
-    whatsapp.end_call()
-    raise DirectReply("Call kaat di, sir.")
+    if whatsapp.end_call():
+        raise DirectReply("Call kaat di, sir.")
+    raise DirectReply("Sir, koi chalti WhatsApp call nahi mili.", ok=False)
 
 
 @tool("Reading WhatsApp messages...", needs=READ_WORDS)
@@ -790,5 +819,5 @@ ALL_TOOLS = [
     get_time_date, system_info, take_screenshot, set_volume, set_mute,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen,
-    send_whatsapp, whatsapp_call, phone_call, end_call, read_messages,
+    send_whatsapp, whatsapp_call, end_call, read_messages,
 ]
