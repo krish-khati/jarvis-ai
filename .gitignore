@@ -16,3 +16,5 @@ memory.json.broken
 
 # Python cache files
 __pycache__/
+
+stt_usage.json

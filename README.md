@@ -4,8 +4,8 @@ Krish ka personal AI assistant: Hinglish mein bolo ya type karo, JARVIS sunta ha
 
 ## Kya-kya karta hai
 
-- **Wake word (offline):** "Hey Jarvis" / "Jarvis wake up" pe jaagta hai. Vosk se chalta hai, internet nahi chahiye, CPU kam lagta hai.
-- **Sunna:** Google speech (en-IN, na samjhe to hi-IN), aur spell kiye naam jodta hai ("k r r i s h 9 7 2" → `krrish972`).
+- **Wake word (offline):** "Hey Jarvis" pe jaagta hai (openWakeWord ka `hey_jarvis` model, ONNX, CPU pe halka). "Jarvis wake up" / "Jarvis shutdown" Vosk (backup) se. Internet nahi chahiye. TV ya baat-cheet pe galat jaagna `.env` ke `WAKE_THRESHOLD` se kam/zyada karo. Sannate mein detectors band rehte hain (CPU ~1%).
+- **Sunna:** Groq Whisper (`whisper-large-v3-turbo`), Gemini transcribe (`gemini-3.5-transcribe`) aur Google, teeno ek fallback chain mein (`STT_ORDER` in `.env`). Har call gini jaati hai; limit/error pe agla engine. Khaas shabd (Jarvis, GitHub, Pndit Ji…) `vocab.txt` mein jodo, memory ke naam apne aap jud jaate hain. Spell kiye naam bhi jodta hai ("k r r i s h 9 7 2" → `krrish972`).
 - **Dimaag:** Gemini main brain hai; limit khatam ho to Groq (`gpt-oss-120b`) apne aap backup ban jaata hai. Dono ki history ek hi hai.
 - **Shortcuts (bina AI):** time, date, battery, weather, volume, app kholna, PC shutdown/restart. Ye 1-2 second mein ho jaate hain.
 - **Tools:** web search, weather (Open-Meteo), apps/websites kholna aur band karna, YouTube, volume/mute, screenshot, PC lock, shutdown/restart.
@@ -60,6 +60,15 @@ copy .env.example .env
 jarvis-ai\models\vosk-model-small-en-in-0.4\
 ```
 
+**4. openWakeWord (wake word ke liye, ~9 MB):**
+
+```powershell
+pip install --no-deps openwakeword
+python setup_wakeword.py
+```
+
+(`--no-deps` isliye ki uske scipy/scikit-learn sirf training ke hain aur bhaari hain; `wakeword.py` unke bina chalata hai.) Model na ho to JARVIS sirf Vosk se chalta hai.
+
 ## Chalana
 
 ```powershell
@@ -103,7 +112,10 @@ Login pe JARVIS `pythonw` se chalta hai (koi terminal nahi), window chhupi rehti
 | File | Kaam |
 |---|---|
 | `main.py` | Voice loop (sleep ↔ active), pywebview window (show/hide), tray icon, stats, UI chat API |
-| `voice.py` | Wake word, mic, Google speech, ElevenLabs/edge-tts, beep |
+| `voice.py` | Wake word loop, mic recording, ElevenLabs/edge-tts, beep |
+| `stt.py` | Speech-to-text chain (Groq Whisper / Gemini transcribe / Google), vocabulary, call counting |
+| `wakeword.py` | openWakeWord `hey_jarvis` detector (threshold `.env` mein) |
+| `vocab.txt` | STT ke liye khaas shabd - yahan add karo |
 | `brain.py` | Shortcut → Gemini → Groq, shared history, jawab ki safai |
 | `shortcuts.py` | Bina AI wale commands (time, weather, memory…) |
 | `tools.py` | Saare tools + safety lock + DRY_RUN |
@@ -117,7 +129,7 @@ Login pe JARVIS `pythonw` se chalta hai (koi terminal nahi), window chhupi rehti
 
 ## Jo GitHub pe nahi hai (`.gitignore`)
 
-`.env` (keys), `memory.json` (personal memory), `venv/`, `models/` (Vosk), `voice_cache/` (saved awaaz).
+`.env` (keys), `memory.json` (personal memory), `venv/`, `models/` (Vosk + openWakeWord), `voice_cache/` (saved awaaz), `stt_usage.json` (roz ki STT call ginti).
 
 ## Dhyan rakhna
 

@@ -11,6 +11,17 @@ elevenlabs
 sounddevice
 numpy
 
+# Wake word: openWakeWord "hey_jarvis" (ONNX). openwakeword ko ALAG se install karo:
+#   pip install --no-deps openwakeword
+# (uske scipy/scikit-learn sirf training ke hain, bhaari hain - wakeword.py unke bina chalata hai)
+# Model download (ek baar): models/openwakeword/ mein hey_jarvis + feature models (README dekho)
+onnxruntime
+flatbuffers
+protobuf
+packaging
+tqdm
+requests
+
 # Tools
 ddgs
 pywhatkit

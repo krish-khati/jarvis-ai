@@ -1,0 +1,13 @@
+# STT vocabulary - jo shabd JARVIS ko sahi spelling mein sunne hain.
+# Har line par ek word ya phrase. '#' se shuru line ignore hoti hai. Yahan add karo, code chhedne ki zarurat nahi.
+# (Memory ke naam apne aap jud jaate hain - unhe yahan likhne ki zarurat nahi.)
+Jarvis
+GitHub
+KRRISH972
+WhatsApp
+YouTube
+Chrome
+VS Code
+Pndit Ji
+Papa
+Mummy

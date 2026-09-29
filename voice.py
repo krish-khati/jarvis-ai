@@ -9,6 +9,7 @@
 # ============================================
 
 import asyncio             # edge-tts async hai, use chalane ke liye
+import collections         # Mic ke pichle tukde yaad rakhne ke liye (deque)
 import hashlib             # Saved awaaz files ke naam banane ke liye
 import json                # Vosk ka result JSON mein aata hai
 import os                  # File paths ke liye
@@ -27,6 +28,8 @@ from elevenlabs.client import ElevenLabs   # ElevenLabs ki awaaz (main)
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"   # pygame ka welcome message chhupao
 import pygame                      # mp3 file play karne ke liye
 
+import stt                         # Speech-to-text: Gemini / Groq Whisper / Google
+import wakeword                    # openWakeWord "hey_jarvis" (main wake word)
 import ui                          # Screen pe status (kya suna, kisne bola)
 
 
@@ -49,6 +52,16 @@ HINDI_VOICE = "hi-IN-MadhurNeural"     # Hindi awaaz
 # Wake word phrases (Vosk sirf inhi words ko pehchanne ki koshish karega)
 WAKE_PHRASES = ["hey jarvis", "jarvis wake up"]
 SHUTDOWN_PHRASES = ["jarvis shutdown", "jarvis shut down"]
+# openWakeWord chal raha ho to Vosk sirf ye phrase wake ke liye sunta hai ("hey jarvis" openWakeWord ka kaam)
+VOSK_BACKUP_WAKE_PHRASES = ["jarvis wake up"]
+# Detectors tab chalte hain jab awaaz (shor * VOSK_GATE) se tez ho; bolna band hone ke baad ~1.2 s aur (15 x 80ms).
+# Shuru hone se pehle ka ~1.3 s (16 x 80ms) replay hota hai taaki "Hey" ka shuruaati hissa na kate.
+# WAKE_ALWAYS_ON=1 (.env) = gate band, detectors hamesha chalein (zyada CPU, par kabhi kuch miss nahi)
+VOSK_GATE = 2.2
+VOSK_GATE_MIN = 150
+ACTIVE_HANG_BLOCKS = 15
+PREROLL_BLOCKS = 16
+WAKE_ALWAYS_ON = os.getenv("WAKE_ALWAYS_ON", "0") == "1"
 
 
 # --- Setup (program shuru hote hi ek baar chalta hai) ---
@@ -144,17 +157,51 @@ eleven_client = ElevenLabs(api_key=ELEVEN_API_KEY) if use_elevenlabs else None
 
 
 # ============================================
-# 1. WAKE WORD - Vosk (offline, kam CPU)
+# 1. WAKE WORD - openWakeWord "hey_jarvis" (main) + Vosk (backup, offline)
 # ============================================
-def wait_for_wake_word():
-    """Chupchap sunta rehta hai jab tak "Hey Jarvis" / "Jarvis wake up"
-    (return "wake") ya "Jarvis shutdown" (return "shutdown") na sune."""
+_detector = None            # WakeDetector (pehli baar zarurat pe load hota hai)
+_detector_failed = False
 
-    # Grammar = Vosk ko bata do ki sirf ye words sunne hain.
-    # Isse CPU kam lagta hai aur galat detection bhi kam hoti hai.
+
+def _get_detector():
+    """openWakeWord detector; load na ho to None (phir Vosk akela sab sambhalta hai)."""
+    global _detector, _detector_failed
+    if _detector is None and not _detector_failed and wakeword.available():
+        try:
+            _detector = wakeword.WakeDetector()
+        except Exception as e:
+            _detector_failed = True
+            print(f"(openWakeWord load nahi hua, Vosk se kaam chalega: {str(e)[:100]})")
+    return _detector
+
+
+def wait_for_wake_word():
+    """Chupchap sunta rehta hai jab tak "Hey Jarvis" (return "wake") ya "Jarvis shutdown"
+    (return "shutdown") na sune. "Jarvis wake up" bhi jagata hai.
+    openWakeWord har 80 ms pe "hey_jarvis" score karta hai; Vosk sirf tab chalta hai jab
+    koi bol raha ho ("jarvis wake up" / "jarvis shutdown" phrases ke liye) - sannate mein CPU bachta hai."""
+    detector = _get_detector()
+    if detector:
+        detector.reset()
+        vosk_wake = VOSK_BACKUP_WAKE_PHRASES      # "hey jarvis" openWakeWord ka kaam hai
+    else:
+        vosk_wake = WAKE_PHRASES                  # openWakeWord nahi -> Vosk purane tareeqe se
+
+    # Grammar = Vosk ko bata do ki sirf ye words sunne hain (CPU kam, galat detection kam).
     # "[unk]" = baaki koi bhi awaaz ("unknown")
-    grammar = json.dumps(WAKE_PHRASES + SHUTDOWN_PHRASES + ["jarvis", "[unk]"])
+    grammar = json.dumps(vosk_wake + SHUTDOWN_PHRASES + ["jarvis", "[unk]"])
     rec = vosk.KaldiRecognizer(vosk_model, SAMPLE_RATE, grammar)
+
+    def check_text(text):
+        # Test ke liye: Vosk ne kya suna (akele "jarvis"/"down" jaise tukde shor hote hain -
+        # sirf 2+ words wale dikhao)
+        if len(text.replace("[unk]", "").split()) >= 2:
+            ui.log(f"Vosk heard: {text}")
+        if any(p in text for p in vosk_wake):
+            return "wake"
+        if any(p in text for p in SHUTDOWN_PHRASES):
+            return "shutdown"
+        return None
 
     # Mic se aane wala audio is queue mein aata rahega
     audio_queue = queue.Queue()
@@ -163,25 +210,56 @@ def wait_for_wake_word():
         # Ye function sounddevice khud har audio tukde ke liye call karta hai
         audio_queue.put(bytes(indata))
 
-    # Mic stream kholo (0.5 second ke tukde, 16-bit mono)
-    with sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=8000,
+    noise_acc = b""                     # Room ke shor ke liye 0.5s ka audio jama karo
+    preroll = collections.deque(maxlen=PREROLL_BLOCKS)   # Awaaz shuru hone se pehle ka ~1.3s (fresh window ke liye)
+    hang = 0                            # Bolna band hone ke baad itne aur tukde sunte raho
+    active = False                      # Abhi koi bol raha hai (detectors chal rahe hain)?
+
+    # Mic stream kholo (80 ms ke tukde = openWakeWord ka frame, 16-bit mono)
+    with sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=wakeword.FRAME,
                            dtype="int16", channels=1, callback=on_audio):
         while True:
             data = audio_queue.get()
-            _update_noise(data)      # Chupchap room ka shor naapte raho
+            noise_acc += data
+            if len(noise_acc) >= 16000:          # 8000 samples = 0.5s
+                _update_noise(noise_acc)         # Chupchap room ka shor naapte raho
+                noise_acc = b""
 
-            # AcceptWaveform True deta hai jab ek poora sentence khatam ho
-            if rec.AcceptWaveform(data):
-                text = json.loads(rec.Result())["text"]
-                # Test ke liye: wake word ne kya suna (akele "jarvis"/"down" jaise
-                # tukde shor hote hain - sirf 2+ words wale dikhao)
-                if len(text.replace("[unk]", "").split()) >= 2:
-                    ui.log(f"Vosk heard: {text}")
+            # Sannate mein dono detectors band (CPU bachta hai); awaaz shor se tez ho tabhi chalte hain
+            loud = WAKE_ALWAYS_ON or noise_level is None or (
+                np.abs(np.frombuffer(data, dtype=np.int16)).mean() > max(noise_level * VOSK_GATE, VOSK_GATE_MIN))
+            if loud:
+                hang = ACTIVE_HANG_BLOCKS
+                if not active:
+                    active = True
+                    if detector:
+                        detector.reset()         # Saaf window: pichhla ~1.3s replay hoga
+                    blocks = list(preroll) + [data]
+                    preroll.clear()
+                else:
+                    blocks = [data]
+            elif hang > 0:
+                hang -= 1
+                blocks = [data]
+            else:
+                preroll.append(data)
+                if active:                       # Bolna khatam -> Vosk ne jo suna uska nateeja
+                    active = False
+                    result = check_text(json.loads(rec.FinalResult())["text"])
+                    if result:
+                        return result
+                continue
 
-                if any(p in text for p in WAKE_PHRASES):
+            for block in blocks:
+                # --- openWakeWord: "hey_jarvis" ---
+                if detector and detector.detected(np.frombuffer(block, dtype=np.int16)):
+                    ui.log(f"Wake word: hey_jarvis (score {detector.peak:.2f})")
                     return "wake"
-                if any(p in text for p in SHUTDOWN_PHRASES):
-                    return "shutdown"
+                # --- Vosk (backup): AcceptWaveform True deta hai jab ek poora sentence khatam ho ---
+                if rec.AcceptWaveform(block):
+                    result = check_text(json.loads(rec.Result())["text"])
+                    if result:
+                        return result
 
 
 def _update_noise(data):
@@ -290,24 +368,22 @@ def listen_command(wait_seconds=8):
     audio = _record_until_silence(wait_seconds=wait_seconds)
     if audio is None:
         return None
-    started = time.time()     # Latency: Google ko text banane mein kitna laga
+    started = time.time()     # Latency: text banane mein kitna laga
 
-    # Pehle English (India) mein try karo - ye English + Hinglish dono
-    # (Roman letters mein) samajh leta hai. Na samjhe to Hindi mein try karo.
-    for language in ("en-IN", "hi-IN"):
-        try:
-            text = recognizer.recognize_google(audio, language=language)
-            last_stt_seconds = time.time() - started
-            ui.log(f"Heard ({language}, {last_stt_seconds:.1f}s): {text}")
-            _said_not_understood = False
-            return text
-        except sr.UnknownValueError:
-            continue                        # Samajh nahi aaya, agli language
-        except sr.RequestError as e:
-            print(f"Google speech service error (internet check karo): {e}")
-            return None
+    # stt.py: Gemini transcribe / Groq Whisper / Google - .env ke STT_ORDER ke hisaab se,
+    # limit ya error pe agla engine (vocabulary vocab.txt se)
+    text, engine = stt.transcribe(audio)
+    last_stt_seconds = time.time() - started
+    if text:
+        ui.log(f"Heard ({engine}, {last_stt_seconds:.1f}s): {text}")
+        _said_not_understood = False
+        return text
 
-    # Dono language mein samajh nahi aaya - lagatar kai baar ho to bhi sirf ek line dikhao
+    if engine is None:
+        print("Speech-to-text: koi engine nahi chala (internet / limits check karo)")
+        return None
+
+    # Kisi engine ko samajh nahi aaya - lagatar kai baar ho to bhi sirf ek line dikhao
     if not _said_not_understood:
         ui.log("Heard: (samajh nahi aaya)")
         _said_not_understood = True
