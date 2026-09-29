@@ -15,6 +15,12 @@ import sys
 import threading  # Voice loop aur stats alag thread mein (UI hang na ho)
 import time     # Latency (jawab aane mein kitna time laga) naapne ke liye
 
+# pythonw (Windows startup, koi terminal nahi) mein stdout/stderr None hote hain - print crash na kare
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 # Terminal mein Hindi/emoji jaise characters print karte waqt crash na ho
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 

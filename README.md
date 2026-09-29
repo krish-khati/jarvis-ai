@@ -87,6 +87,17 @@ $env:DRY_RUN = '1'; python main.py
 
 Confirm pe "polite bana do" / "English mein likh do" bolo to message sudhaar ke dobara poochega.
 
+## Windows ke saath apne aap chalu (optional)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\JARVIS\setup_startup.ps1            # chalu karo
+powershell -ExecutionPolicy Bypass -File D:\JARVIS\setup_startup.ps1 -Status    # check
+powershell -ExecutionPolicy Bypass -File D:\JARVIS\setup_startup.ps1 -Remove    # band karo
+```
+
+Login pe JARVIS `pythonw` se chalta hai (koi terminal nahi), window chhupi rehti hai, sirf tray icon dikhta hai.
+"Jarvis wake up" bolo to HUD aayega, Esc ya "Jarvis sleep" pe chhup jaayega.
+
 ## Files
 
 | File | Kaam |

@@ -27,6 +27,10 @@ $env:DRY_RUN = '1'; python main.py   # voice + HUD (window starts hidden; "Jarvi
 python jarvis.py                     # text-only chat in terminal
 ```
 
+Windows startup (user runs this, Claude must not install it on its own):
+`powershell -ExecutionPolicy Bypass -File D:\JARVIS\setup_startup.ps1` (remove: add `-Remove`, check: `-Status`).
+`venv\Scripts\pythonw.exe` is only a launcher: it starts a child pythonw, so kill both when testing. Under pythonw `sys.stdout` is None; `main.py` redirects stdout/stderr to devnull.
+
 `.env` keys: `GEMINI_API_KEY`, `GROQ_API_KEY`, `GROQ_MODEL` (openai/gpt-oss-120b), `GROQ_VISION_MODEL` (qwen/qwen3.8-27b), `GROQ_REASONING_EFFORT` (low), `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `DRY_RUN`. Template: `.env.example`.
 
 ## Files
@@ -46,6 +50,7 @@ python jarvis.py                     # text-only chat in terminal
 | `ui/index.html` | Single-file HUD (HTML+CSS+JS). `#preview` hash shows demo data in a browser (used for Edge headless screenshots) |
 | `jarvis.py` | Text mode; sets typed `confirm` / `ask_user` |
 | `README.md` | User-facing setup guide (includes WhatsApp setup, commands, safety) |
+| `setup_startup.ps1` | Windows startup shortcut (`pythonw`, no terminal). Install / `-Status` / `-Remove`. NOT installed by Claude; the user runs it themselves |
 
 Python 3.14 notes: PyAudio and pygame have no wheels, so the project uses `sounddevice` and `pygame-ce`; `winsdk` does not install, so notifications use `winrt-*` (pywinrt) packages.
 
@@ -56,6 +61,7 @@ Python 3.14 notes: PyAudio and pygame have no wheels, so the project uses `sound
 - Shortcuts without AI for time, date, battery, weather, volume, apps, PC shutdown/restart, memory.
 - Tools: web search (ddgs), weather (Open-Meteo), open/close apps and sites, YouTube, volume/mute, screenshot, lock, shutdown/restart, memory, screen vision.
 - Memory: save with exact read-back and spelling ("K-R-R-I-S-H-9-7-2. Sahi hai?"), "galat hai" = undo, "memory dikhao", "memory 2 hatao", typed `remember: X = Y`.
+- Background mode (verified 2026-09-29 with a test harness + real pywebview window, DRY_RUN=1): window starts hidden, `ui.wake()` shows it fullscreen and it gets keyboard focus, `ui.set_state("sleeping")` + `hide_window()` hides it, Esc (JS keydown -> `Api.hide`) hides it, tray icon thread (pystray: Show Jarvis / Quit) runs. All `ui.*` bridge functions (`wake`, `setState`, `sleep`, `addMessage`, `log`, `setLevel`, `setStats`, `setWeather`, `action`) exist in `window.jarvis` and have Python callers. Measure window visibility with `EnumWindows` + `IsWindowVisible` (`FindWindowW` returned a wrong window).
 - HUD: states, waveform with real voice level, stats (CPU/RAM/battery/disk/net), weather panel, activity cards, conversation, dock buttons, typed commands.
 
 ## WhatsApp feature - current status (WORK IN PROGRESS)
@@ -76,4 +82,5 @@ What works (DRY_RUN tests on the real app):
 
 What is NOT done / not verified:
 - Opening chats is fixed and verified (DRY_RUN, real app): own "(You)" chat 3/3 (~0.7s, click), a real contact 5/5 (~2.9s, keyboard Down+Enter and click both work), unknown name -> "naam nahi mila" with nothing typed anywhere else. Max 2 open tries, no re-search; paste/Enter only after a focus check.
+- Re-tested 2026-09-29 (DRY_RUN=1, real app): unknown name "zzqxnotaname" -> "naam nahi mila", search box empty afterwards, nothing typed in any message box; own (You) chat opens. Bug fixed: `open_self` right after a cleared search failed because the chat list was not back yet; it now waits up to 3 s. Note: the (You) chat can hold a leftover draft typed by the user; never clear or overwrite it.
 - Real send verified once (2026-09-27, to a real contact: paste + Enter + "message appeared" check OK). Real voice call + end call verified once: header buttons are `Video call` / `Voice call` (own chat has none); the call opens a separate WhatsApp window with `End call`, found by process id. `_click` refuses to click unless WhatsApp (or the given owner window) is in front and under the click point. Real video call + end verified once too. Reading real messages NOT done yet: listener works (permission Allowed, other apps' toasts are read), but a real incoming WhatsApp message (unread in the chat list) created no Windows toast, so "messages padho" found nothing. Next time: check WhatsApp notifications are ON (Windows Settings > System > Notifications, and inside WhatsApp), keep WhatsApp minimized, do not open the message on the phone, then re-check counts only.
