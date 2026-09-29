@@ -510,13 +510,19 @@ def open_self(win, methods=("click", "keyboard")):
     mein dhoondh ke wahin se kholo. Return (title, box, method) ya (None, None, None)."""
     t = time.time()
     doc = _doc(win)
-    grid = next((g for g in doc.descendants(control_type="DataGrid")
-                 if (g.element_info.name or "").strip() == CHAT_LIST), None)
     row = None
-    for r in (grid.children() if grid else []):   # Pinned nahi - list mein upar-neeche hoti hai
-        if any("(You)" in (d.element_info.name or "") for d in [r] + r.descendants(control_type="DataItem")):
-            row = r
+    # Search abhi saaf hua ho to chat list wapas aane mein thoda time lagta hai - 3s tak wait
+    deadline = time.time() + 3
+    while row is None:
+        grid = next((g for g in doc.descendants(control_type="DataGrid")
+                     if (g.element_info.name or "").strip() == CHAT_LIST), None)
+        for r in (grid.children() if grid else []):   # Pinned nahi - list mein upar-neeche hoti hai
+            if any("(You)" in (d.element_info.name or "") for d in [r] + r.descendants(control_type="DataItem")):
+                row = r
+                break
+        if row is not None or time.time() > deadline:
             break
+        time.sleep(0.3)
     log("(You) chat list mein", t, row is not None)
     if row is None:
         return None, None, None
