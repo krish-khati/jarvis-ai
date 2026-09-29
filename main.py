@@ -381,6 +381,9 @@ def stats_loop():
     last, last_t = psutil.net_io_counters(), time.time()
     while True:
         time.sleep(2)
+        if not ui.is_visible():
+            last, last_t = psutil.net_io_counters(), time.time()   # Chhupi window: naapna bhi band (CPU bachao)
+            continue
         battery = psutil.sensors_battery()
         # Network: pichle 2 second mein kitne bytes aaye+gaye -> MB/s
         now, now_t = psutil.net_io_counters(), time.time()

@@ -253,6 +253,8 @@ body[data-state="thinking"] .dial-core .state { color: var(--amber); }
 .sleep-msg .ember { width: 12px; height: 12px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 22px 6px var(--glow); animation: breathe 3s ease-in-out infinite; }
 .sleep-msg p { margin: 0; font-size: 1.1rem; letter-spacing: 0.3em; color: rgba(143,227,255,0.75); }
 @keyframes breathe { 50% { transform: scale(0.5); opacity: 0.35; } }
+/* Window chhupi ya JARVIS soya hua: har animation ruki (GPU/CPU ~0). Wake pe class hat jaati hai */
+body.idle *, body.idle *::before, body.idle *::after { animation-play-state: paused !important; }
 body.sleep .hud { filter: blur(7px) brightness(0.45); opacity: 0.45; }
 body.sleep .sleep-msg { opacity: 1; }
 
@@ -502,7 +504,7 @@ body.snap, body.snap * { transition: none !important; }
     else if (state === "thinking") target = 0.4;
     else if (state === "sleeping") target = 0.02;
     else target = 0.06;
-    level += (target - level) * 0.2;
+    level += (target - level) * 0.33;      // 30 FPS pe 60 FPS jaisi smoothness
 
     const tt = t / 1000;
     cx.lineWidth = 3 * s;
@@ -521,10 +523,25 @@ body.snap, body.snap * { transition: none !important; }
       cx.stroke();
     }
   }
+  // Waveform sirf tab chalta hai jab window dikh rahi ho AUR JARVIS jaaga ho; 30 FPS se zyada nahi
+  const FRAME_MS = 1000 / 30;
+  let visible = true, rafId = 0, lastDraw = -1e9, clockId = 0;
   function frame(t) {
-    drawWave(reduced ? 0 : t);
-    requestAnimationFrame(frame);
+    rafId = 0;
+    if (!(visible && awake)) return;                 // Rukna hai -> agla frame mangte hi nahi
+    if (t - lastDraw >= FRAME_MS - 2) { lastDraw = t; drawWave(reduced ? 0 : t); }
+    rafId = requestAnimationFrame(frame);
   }
+  // Animations aur loops ko halat ke hisaab se chalao/roko
+  function applyRunState() {
+    const run = visible && awake;
+    body.classList.toggle("idle", !visible || !awake);
+    if (run && !rafId) rafId = requestAnimationFrame(frame);
+    if (!run && rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    if (visible && !clockId) { tickClock(); clockId = setInterval(tickClock, 1000); }
+    if (!visible && clockId) { clearInterval(clockId); clockId = 0; }
+  }
+  function setVisible(v) { visible = !!v; applyRunState(); }
 
   /* ================= CLOCK ================= */
   const MONTHS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
@@ -686,6 +703,7 @@ body.snap, body.snap * { transition: none !important; }
     awake = true;
     if (!reduced) wakeSound();
     body.classList.remove("sleep");
+    applyRunState();
     body.classList.add("waking");
     setTimeout(() => body.classList.remove("waking"), 900);
     setState("listening");
@@ -694,6 +712,8 @@ body.snap, body.snap * { transition: none !important; }
     awake = false;
     body.classList.add("sleep");
     setState("sleeping");
+    drawWave(0);                                     // Aakhri (shaant) frame; uske baad canvas band
+    setTimeout(applyRunState, 900);                  // Sleep transition (0.9s) khatam hone do, phir sab roko
   }
 
   /* ================= COMMANDS -> Python ================= */
@@ -729,13 +749,12 @@ body.snap, body.snap * { transition: none !important; }
   });
 
   /* ================= Python bridge ================= */
-  window.jarvis = { wake, sleep, setState, addMessage, log, setLevel, setStats, setWeather, action };
+  window.jarvis = { wake, sleep, setState, addMessage, log, setLevel, setStats, setWeather, action, setVisible };
 
   addEventListener("resize", sizeCanvas);
   sizeCanvas();
-  tickClock(); setInterval(tickClock, 1000);
   setState("sleeping");
-  requestAnimationFrame(frame);
+  applyRunState();
 
   /* ================= Preview (sirf browser mein "#preview" / "#preview-sleep") ================= */
   if (location.hash === "#preview") {
