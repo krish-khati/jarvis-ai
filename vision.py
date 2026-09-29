@@ -59,11 +59,12 @@ def ask_about_image(jpeg, question):
     import ui
 
     # --- 1. Gemini (image ke saath) ---
-    if brain.gemini_client and time.time() >= brain.gemini_blocked_until:
+    if brain.gemini_available():
+        model = brain.gemini_model()
         try:
             from google.genai import types
             r = brain.gemini_client.models.generate_content(
-                model=brain.GEMINI_MODEL,
+                model=model,
                 contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"),
                           VISION_PROMPT + question],
             )
@@ -72,8 +73,7 @@ def ask_about_image(jpeg, question):
         except Exception as e:
             code = getattr(e, "code", None)
             print(f"  (Gemini vision error {code or ''}: {str(e)[:100]})")
-            if code == 429:
-                brain.gemini_blocked_until = time.time() + brain.GEMINI_REST_SECONDS
+            brain._model_failed(model, code)      # Ye model kuch der skip
             ui.log("Switched to backup vision (Groq)")
 
     # --- 2. Groq vision model ---

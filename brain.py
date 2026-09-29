@@ -38,9 +38,12 @@ if (not GEMINI_KEY or GEMINI_KEY == "your_key_here") and not GROQ_KEY:
 
 # --- Step 2: Models aur clients ---
 # Gemini (main brain)
-# (gemini-2.5-flash ab naye users ke liye band hai, isliye naya model)
-# Agar "high demand" (503) error aaye to yahan koi aur flash model try karo
-GEMINI_MODEL = "gemini-3.6-flash"
+# Model naam .env ke GEMINI_MODEL se aate hain (comma se alag, pehla = sabse pasandida).
+# Koi model 503/429 de to kuch der skip hota hai aur agla try hota hai.
+GEMINI_MODELS = [m.strip() for m in os.getenv("GEMINI_MODEL", "gemini-3.6-flash").split(",") if m.strip()]
+GEMINI_MODEL_REST = {429: 10 * 60, 404: 60 * 60}     # Error code -> kitni der us model ko chhodo
+GEMINI_MODEL_REST_DEFAULT = 3 * 60                   # 503 (high demand) jaise baaki errors
+_model_down_until = {}
 gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
 # Groq (backup brain) - model .env ke GROQ_MODEL se aata hai, code chhedne ki zarurat nahi
@@ -49,10 +52,27 @@ groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
 # gpt-oss models kitna "soch" ke jawab dein: low / medium / high (low = sabse fast)
 GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low")
 
-# Gemini ki limit khatam ho to itne second tak Gemini ko try hi mat karo
-# (har baar fail hone wali request bhejna time ki barbadi hai)
-GEMINI_REST_SECONDS = 10 * 60
-gemini_blocked_until = 0
+
+
+def _gemini_models_up():
+    """Wo Gemini models jo abhi 'aaram' pe nahi hain (priority order mein)."""
+    now = time.time()
+    return [m for m in GEMINI_MODELS if _model_down_until.get(m, 0) <= now]
+
+
+def gemini_available():
+    """Gemini abhi try karne layak hai? (client hai aur koi model aaram pe nahi)"""
+    return bool(gemini_client and _gemini_models_up())
+
+
+def gemini_model():
+    """Abhi ka pehla chalne layak Gemini model (sab aaram pe hon to pehla wala)."""
+    return (_gemini_models_up() or GEMINI_MODELS)[0]
+
+
+def _model_failed(model, code):
+    """Model fail hua -> kuch der ke liye skip (429 = limit, 404 = model nahi, baaki = 503 jaisa)."""
+    _model_down_until[model] = time.time() + GEMINI_MODEL_REST.get(code, GEMINI_MODEL_REST_DEFAULT)
 
 # Aakhri jawab kis brain ne diya: "shortcut", "gemini" ya "groq"
 last_brain = None
@@ -121,8 +141,13 @@ def rewrite_message(message, instruction):
            f"Message: \"{message}\"\n"
            "Reply with ONLY the new message text - no quotes, no explanation.")
     try:
-        if gemini_client and time.time() >= gemini_blocked_until:
-            r = gemini_client.models.generate_content(model=GEMINI_MODEL, contents=ask)
+        if gemini_available():
+            model = gemini_model()
+            try:
+                r = gemini_client.models.generate_content(model=model, contents=ask)
+            except Exception as e:
+                _model_failed(model, getattr(e, "code", None))
+                raise
             if r.text:
                 return _tidy(r.text).strip('"')
     except Exception:
@@ -218,7 +243,7 @@ def _remember(user_text, reply):
 # ============================================
 # GEMINI (main brain)
 # ============================================
-def _ask_gemini(message):
+def _ask_gemini(message, model):
     """Gemini se poochho. Gemini tools apne aap chalata hai (automatic function calling)."""
     # Shared history ko Gemini ke format mein badlo (assistant = "model")
     past = [
@@ -227,7 +252,7 @@ def _ask_gemini(message):
         for h in history
     ]
     chat = gemini_client.chats.create(
-        model=GEMINI_MODEL,
+        model=model,
         config=types.GenerateContentConfig(
             system_instruction=system_prompt(),     # Rules + Krish ki saved memories
             tools=tools.ALL_TOOLS,
@@ -458,7 +483,7 @@ def continues_spelling(text):
 
 def _answer(message):
     """ask() ka asli kaam: shortcut -> Gemini -> Groq."""
-    global last_brain, gemini_blocked_until
+    global last_brain
 
     # --- 1. Simple command? Bina AI ke seedha chalao (requests bachti hain) ---
     last_brain = "shortcut"      # (pehle set - taaki DirectReply aaye to pata rahe kisne chalaya)
@@ -471,21 +496,23 @@ def _answer(message):
 
     # --- 2. Gemini (main brain) ---
     tools.call_log.clear()       # Is sawaal mein kaunse tools chale, yahan jama honge
-    if gemini_client and time.time() >= gemini_blocked_until:
+    if gemini_available():
         last_brain = "gemini"
-        try:
-            reply = _tidy(_ask_gemini(message))
-            last_brain = "gemini"
-            ui.log("Brain: Gemini")
-            _remember(message, reply)
-            return reply
-        except Exception as e:
-            code = getattr(e, "code", None)
-            print(f"  (Gemini error {code or ''}: {str(e)[:120]})")
-            if code == 429:      # Limit khatam -> kuch der Gemini ko chhodo
-                gemini_blocked_until = time.time() + GEMINI_REST_SECONDS
-            if groq_client:
-                ui.log("Switched to backup brain")
+        for model in _gemini_models_up():
+            try:
+                reply = _tidy(_ask_gemini(message, model))
+                last_brain = "gemini"
+                ui.log(f"Brain: Gemini ({model})")
+                _remember(message, reply)
+                return reply
+            except Exception as e:
+                code = getattr(e, "code", None)
+                print(f"  (Gemini {model} error {code or ''}: {str(e)[:120]})")
+                _model_failed(model, code)      # Ye model kuch der ke liye skip
+                if tools.call_log:              # Tool chal chuka hai -> dusra Gemini nahi, Groq note ke saath
+                    break
+        if groq_client:
+            ui.log("Switched to backup brain")
 
     # --- 3. Groq (backup brain) ---
     if not groq_client:
