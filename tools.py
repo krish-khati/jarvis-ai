@@ -123,6 +123,15 @@ VOLUME_WORDS = {"volume", "mute", "unmute", "awaaz", "awaz", "aawaz", "sound", "
                 "आवाज़", "आवाज", "वॉल्यूम", "म्यूट"}
 PLAY_WORDS = {"play", "chalao", "chala", "bajao", "baja", "sunao", "lagao", "laga",
               "चलाओ", "बजाओ", "सुनाओ", "लगाओ"}
+# Media keys (play/pause/next/previous/stop): "gaana pause karo", "next gaana", "gaana roko"
+MEDIA_WORDS = {"pause", "play", "next", "previous", "prev", "gaana", "gana", "gane", "song",
+               "songs", "music", "track", "roko", "rok", "chalao", "चलाओ", "रोको", "गाना"}
+# Volume RELATIVE badalna: "awaaz badhao", "awaaz kam karo" (set_volume/mute ke alawa)
+VOLUME_REL_WORDS = {"kam", "zyada", "badhao", "badha", "badhana", "ghatao", "ghata", "tez",
+                    "dheere", "increase", "decrease", "up", "down", "कम", "ज्यादा", "बढ़ाओ"}
+# Screen brightness: "brightness kam karo", "roshni badhao"
+BRIGHTNESS_WORDS = {"brightness", "roshni", "roshniyan", "dim", "bright",
+                    "ब्राइटनेस", "रोशनी"}
 
 
 def _asked_for(words):
@@ -478,6 +487,138 @@ def set_mute(mute: bool) -> str:
 
 
 # ============================================
+# 9b. VOLUME RELATIVE - "awaaz badhao" / "awaaz kam karo"
+#   set_volume se alag: ye abhi ka level padh ke upar-neeche 10% (ya jitna bolo) le jaata hai
+# ============================================
+@tool("Changing volume {direction}...", needs=VOLUME_WORDS | VOLUME_REL_WORDS)
+def volume_change(direction: str, amount: int = 10) -> str:
+    """Turn the current speaker volume UP or DOWN by a few percent (default 10) - use for
+    'awaaz badhao' / 'awaaz kam karo' / 'volume up' / 'thoda dheere'. direction = 'up' or
+    'down', amount = how many percent. To set an exact level use set_volume instead."""
+    step = str(direction or "").strip().lower()
+    if step not in ("up", "down"):
+        return "Could not change volume: direction must be 'up' or 'down'."
+    try:
+        amount = int(amount)
+    except (TypeError, ValueError):
+        return "Could not change volume: amount must be a number of percent."
+    amount = max(1, min(100, amount))
+    if DRY_RUN:
+        return _dry_run(f"volume {step} by {amount}% (abhi ka level padh ke upar-neeche le jaata)")
+    volume = _speaker_volume()
+    current = int(round(volume.GetMasterVolumeLevelScalar() * 100))
+    target = max(0, min(100, current + (amount if step == "up" else -amount)))
+    volume.SetMute(0, None)                               # Badha rahe hain to pehle unmute karo
+    volume.SetMasterVolumeLevelScalar(target / 100, None)
+    return f"Volume {step} by {amount}%: {current}% -> {target}%"
+
+
+# ============================================
+# 9c. MEDIA KEYS - play/pause, next, previous, stop
+#   Windows ke media keys (VK 0xB3/0xB0/0xB1/0xB2) - koi app chalu ho ya na ho,
+#   khud chal raha player (Spotify/Chrome/YouTube) pakad leta hai. Koi naya library nahi.
+# ============================================
+MEDIA_KEYS = {"play_pause": 0xB3, "next": 0xB0, "previous": 0xB1, "stop": 0xB2}
+_MEDIA_ALIASES = {"play": "play_pause", "pause": "play_pause", "resume": "play_pause",
+                  "toggle": "play_pause", "prev": "previous", "back": "previous",
+                  "skip": "next", "forward": "next", "pause_play": "play_pause"}
+
+
+def _media_key(vk):
+    """Windows media key dabao aur chhod do (keybd_event: pehle press, phir KEYUP)."""
+    import ctypes
+    ctypes.windll.user32.keybd_event(vk, 0, 0, 0)              # press
+    ctypes.windll.user32.keybd_event(vk, 0, 0x0002, 0)          # release (KEYEVENTF_KEYUP)
+
+
+@tool("Media: {action}...", needs=MEDIA_WORDS)
+def media_control(action: str) -> str:
+    """Control music/video playback with the Windows media keys. action = 'play_pause'
+    (pause or resume - for 'gaana pause karo', 'chalao'), 'next' (next song/track),
+    'previous' (previous song/track) or 'stop'. Use only when Krish's current message asks
+    to play, pause, skip or stop the music - it works with whatever player is running."""
+    key = str(action or "").strip().lower().replace("-", "_").replace(" ", "_")
+    key = _MEDIA_ALIASES.get(key, key)
+    if key not in MEDIA_KEYS:
+        return "Could not control media: use play_pause, next, previous or stop."
+    if DRY_RUN:
+        return _dry_run(f"press media key {key} (VK 0x{MEDIA_KEYS[key]:02X})")
+    _media_key(MEDIA_KEYS[key])
+    return f"Media key sent: {key.replace('_', ' ')}"
+
+
+# ============================================
+# 9d. SCREEN BRIGHTNESS - sirf laptop ki apni screen (WMI se, nayi library nahi)
+#   Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods
+#   WmiGetBrightness() se padhte hain, WmiSetBrightness se badalte hain.
+#   External monitor / desktop PC pe ye class hoti hi nahi - saaf error, crash nahi.
+# ============================================
+_NO_BRIGHTNESS = ("Could not control screen brightness: ye sirf laptop ki apni built-in screen "
+                  "pe chalta hai, is PC pe brightness control nahi mila (external monitor ho "
+                  "sakta hai).")
+_BRIGHTNESS_HEAD = "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods"
+
+
+def _brightness_read():
+    """Laptop screen ka current brightness (0-100). Na mile / error ho to None."""
+    ps = f"$m = {_BRIGHTNESS_HEAD}; if ($m) {{ $m.WmiGetBrightness().CurrentBrightness }} else {{ 'NONE' }}"
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                             capture_output=True, text=True, timeout=25).stdout.strip()
+        return None if out in ("", "NONE") else int(out)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def _brightness_write(level):
+    """Brightness 0-100 set karo. False = ye screen brightness control nahi kar sakti."""
+    ps = (f"$m = {_BRIGHTNESS_HEAD}; if ($m) {{ $m | Invoke-CimMethod -MethodName "
+          f"WmiSetBrightness -Arguments @{{Timeout=1;Brightness={int(level)}}} | Out-Null; 'OK' }} "
+          f"else {{ 'NONE' }}")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                             capture_output=True, text=True, timeout=25).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return out.endswith("OK")
+
+
+@tool("Brightness: {action}...", needs=BRIGHTNESS_WORDS)
+def brightness(action: str, level: int = None) -> str:
+    """Get or change the laptop's built-in screen brightness (0-100 percent).
+    action = 'get' (current brightness), 'set' (needs level, e.g. 50), 'up' or 'down'
+    (10% step). Use for 'brightness kam karo', 'roshni zyada karo', 'brightness 50 karo'.
+    It only works on a laptop's own screen - on an external monitor it changes nothing."""
+    act = str(action or "").strip().lower()
+    if act not in ("get", "set", "up", "down"):
+        return "Could not control brightness: action must be get, set, up or down."
+
+    if act == "set":
+        try:
+            target = max(0, min(100, int(level)))
+        except (TypeError, ValueError):
+            return "Could not set brightness: level must be a number from 0 to 100."
+        if DRY_RUN:
+            return _dry_run(f"set screen brightness to {target}%")
+        return f"Screen brightness {target}% set." if _brightness_write(target) else _NO_BRIGHTNESS
+
+    if act in ("up", "down"):
+        step = 10                                    # 10% ka step
+        if DRY_RUN:
+            return _dry_run(f"screen brightness {'+' if act == 'up' else '-'} {step}%")
+        current = _brightness_read()
+        if current is None:
+            return _NO_BRIGHTNESS
+        target = max(0, min(100, current + (step if act == "up" else -step)))
+        return (f"Screen brightness {current}% -> {target}%." if _brightness_write(target)
+                else _NO_BRIGHTNESS)
+
+    # action == "get": sirf padhna hai (kuch badalta nahi) - DRY_RUN mein bhi chalega
+    current = _brightness_read()
+    return f"Screen brightness {current}%." if current is not None else _NO_BRIGHTNESS
+
+
+# ============================================
 # 10. PC LOCK
 # ============================================
 @tool("Locking PC...", needs=LOCK_WORDS)
@@ -824,7 +965,8 @@ def read_messages() -> str:
 # ============================================
 ALL_TOOLS = [
     web_search, get_weather, open_website, play_on_youtube, open_app, close_app,
-    get_time_date, system_info, take_screenshot, set_volume, set_mute,
+    get_time_date, system_info, take_screenshot, set_volume, set_mute, volume_change,
+    media_control, brightness,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen,
     send_whatsapp, whatsapp_call, end_call, read_messages,

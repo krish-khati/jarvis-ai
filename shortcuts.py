@@ -75,6 +75,49 @@ UNMUTE = re.compile(r"unmute( karo| kar do| kardo)?|(awaaz|sound) (chalu|on) (ka
 OPEN_EN = re.compile(r"open (the )?(?P<name>.+?)( app)?")
 OPEN_HI = re.compile(r"(?P<name>.+?) (kholo|khol do|open karo|open kar do|chalu karo|start karo)")
 
+# ============================================
+# Media keys / relative volume / brightness (bina AI)
+#   Sab POORE command se match hote hain (fullmatch), taaki "next match kab hai" jaisa
+#   sawaal, ya "brightness kya hai" (get) galti se shortcut na bane.
+# ============================================
+_GAANA = r"(?:gaana|gana|gane|gaane|song|songs|music|track|video|गाना|संगीत)"
+_KARO = r"(?:karo|kar do|kardo|kar de|do)"
+_CHALAO = r"(?:chalao|chala do|chala|sunao|suno|play karo|baja do|chalao ja)"
+
+MEDIA_PLAY_PAUSE = re.compile(
+    rf"(?:{_GAANA} )?(?:play|pause|chalu|resume)(?: {_KARO})?(?: {_GAANA})?"
+    rf"|(?:play|pause) (?:the )?(?:music|song|gaana|playback|video|media)(?: {_KARO})?")
+MEDIA_NEXT = re.compile(
+    rf"(?:next|agli|agla|agale|aage|aage wala)(?: ka| ki| wala| wali)? (?:{_GAANA} )?(?:{_GAANA})"
+    rf"(?: (?:{_CHALAO}|{_KARO}))?")
+MEDIA_PREVIOUS = re.compile(
+    rf"(?:pichla|pichli|pichle|pehla|pehli|previous|last wala|agle pichle)(?: ka| ki| wala| wali)? "
+    rf"(?:{_GAANA} )?(?:{_GAANA})(?: (?:{_CHALAO}|{_KARO}))?")
+MEDIA_STOP = re.compile(
+    # "gaana roko" / "music band karo" / "rok do gaana" - media word dono taraf zaroori
+    rf"(?:roko|rok do|rok|banda karo|band karo|band kar do|chup karo) (?:the )?(?:{_GAANA}|music|playback|video)"
+    rf"|(?:{_GAANA}) (?:roko|rok do|rok|banda karo|band karo|band kar do|chup karo)")
+
+# "awaaz badhao" / "awaaz kam karo" (set_volume "volume 50" wala alag hai)
+_AWAAZ = r"(?:awaaz|awaz|aawaz|volume|sound|आवाज़|आवाज)"
+VOL_UP = re.compile(
+    rf"{_AWAAZ} (?:badhao|badha do|badha|badhana|zyada|tez|increase|up)(?: {_KARO})?"
+    rf"|(?:badhao|badha do|increase|up|turn up) (?:the )?{_AWAAZ}")
+VOL_DOWN = re.compile(
+    rf"{_AWAAZ} (?:kam|ghatao|ghata|ghata do|dheere|down|decrease)(?: {_KARO})?"
+    rf"|(?:kam|ghatao|ghata|decrease|down|turn down) (?:the )?{_AWAAZ}")
+
+# "brightness kam karo" / "brightness zyada karo" / "brightness 50 karo"
+_SCREEN_LIGHT = r"(?:brightness|brightnes|roshni|roshniyan|dim|bright|ब्राइटनेस|रोशनी)"
+BRIGHTNESS_SET = re.compile(
+    rf"{_SCREEN_LIGHT} (?:ko |to |par )?(?P<n>\d{{1,3}})\s*(?:%|percent)?(?: {_KARO})?")
+BRIGHTNESS_UP = re.compile(
+    rf"{_SCREEN_LIGHT} (?:zyada|badhao|badha|increase|up|full)(?: {_KARO})?"
+    rf"|(?:badhao|badha|increase|up) (?:the )?{_SCREEN_LIGHT}(?: {_KARO})?")
+BRIGHTNESS_DOWN = re.compile(
+    rf"{_SCREEN_LIGHT} (?:kam|ghatao|ghata|dheere|down|low|minimum|zero)(?: {_KARO})?"
+    rf"|(?:kam|ghatao|ghata) (?:the )?{_SCREEN_LIGHT}(?: {_KARO})?")
+
 # Weather: "delhi ka weather kaisa hai", "mumbai mein mausam kya hai", "weather in pune"
 # Google "weather" ko kabhi "vedar"/"whether" sun leta hai - wo sab bhi pakdo
 WEATHER_WORD = r"(weather|wether|whether|vedar|vether|wedar|wheather|mausam|mosam|temperature|temp)"
@@ -294,6 +337,66 @@ def _whatsapp_command(command, text):
     return None
 
 
+# ============================================
+# Media keys / volume relative / brightness commands (bina AI)
+#   Poora command match hona zaroori (fullmatch) - "next match kab hai" jaisa sawaal
+#   ya "brightness kya hai" (get) shortcut nahi banna chahiye, wo AI ke paas jaaye.
+# ============================================
+def _tool_reply(result, hi, yes_hi, yes_en):
+    """Tool ka result check karo: error / DRY_RUN / confirm line.
+
+    Hinglish ya English confirm line bhi de deta hai (test mode mein 'Sir, test mode...' -
+    asli kaam nahi hua, ye saaf batana zaroori hai)."""
+    text = str(result)
+    if text.startswith(("Error", "Could not", "BLOCKED")):
+        return f"Sorry sir, {text}"
+    if text.startswith("DRY RUN"):
+        return "Sir, test mode hai, isliye ye kaam sach mein nahi hua."
+    return yes_hi if hi else yes_en
+
+
+def _media_command(text, hi):
+    """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
+    # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
+    m = BRIGHTNESS_SET.fullmatch(text)
+    if m:
+        level = max(0, min(100, int(m["n"])))
+        result = tools.brightness("set", level)
+        return _tool_reply(result, hi, f"Screen brightness {level}% kar di, sir.",
+                            f"Screen brightness set to {level}%, sir.")
+
+    if BRIGHTNESS_UP.fullmatch(text):
+        return _tool_reply(tools.brightness("up"), hi, "Screen ki roshni badha di, sir.",
+                           "Screen brightness turned up, sir.")
+    if BRIGHTNESS_DOWN.fullmatch(text):
+        return _tool_reply(tools.brightness("down"), hi, "Screen ki roshni kam kar di, sir.",
+                           "Screen brightness turned down, sir.")
+
+    # --- Volume relative: "awaaz badhao" / "awaaz kam karo" ---
+    if VOL_UP.fullmatch(text):
+        return _tool_reply(tools.volume_change("up", 10), hi, "Awaaz badha di, sir.",
+                           "Volume turned up, sir.")
+    if VOL_DOWN.fullmatch(text):
+        return _tool_reply(tools.volume_change("down", 10), hi, "Awaaz kam kar di, sir.",
+                           "Volume turned down, sir.")
+
+    # --- Media keys: pause/play, next, previous, stop ---
+    if MEDIA_PLAY_PAUSE.fullmatch(text):
+        return _tool_reply(tools.media_control("play_pause"), hi,
+                           "Theek hai sir, gaana pause/chalu kar diya.",
+                           "Done, sir - media play/pause.")
+    if MEDIA_NEXT.fullmatch(text):
+        return _tool_reply(tools.media_control("next"), hi, "Agla gaana chala diya, sir.",
+                           "Skipped to the next track, sir.")
+    if MEDIA_PREVIOUS.fullmatch(text):
+        return _tool_reply(tools.media_control("previous"), hi, "Pichla gaana chala diya, sir.",
+                           "Went back to the previous track, sir.")
+    if MEDIA_STOP.fullmatch(text):
+        return _tool_reply(tools.media_control("stop"), hi, "Gaana roka diya, sir.",
+                           "Stopped playback, sir.")
+    return None
+
+
 def handle(command):
     """Simple command ho to khud chala ke jawab (text) do, warna None."""
     text = _clean(command)
@@ -383,6 +486,12 @@ def handle(command):
     if MUTE.fullmatch(text):
         tools.set_mute(True)
         return "Mute kar diya, sir." if hi else "Muted, sir."
+
+    # --- Media keys / volume relative / brightness (app/website se PEHLE, warna "chalu karo"
+    #     wali commands galat jagah chali jaati hain) ---
+    reply = _media_command(text, hi)
+    if reply:
+        return reply
 
     # --- App / website kholna ---
     m = OPEN_EN.fullmatch(text) or OPEN_HI.fullmatch(text)
