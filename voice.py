@@ -16,6 +16,7 @@ import os                  # File paths ke liye
 import queue               # Mic se aaye audio ke tukde store karne ke liye
 import re                  # Text mein Hindi letters dhoondhne ke liye
 import tempfile            # Awaaz ki mp3 file temporary folder mein rakhne ke liye
+import threading            # Awaaz banane wala thread (lamba text pipeline mein)
 import time                # Latency (kitne second lage) naapne ke liye
 
 import numpy as np                 # Awaaz kitni tez hai (volume) naapne ke liye
@@ -463,6 +464,96 @@ def _loudness_envelope(path):
         return []
 
 
+def _make_audio(clean, path, cache=False):
+    """clean text ki awaaz path pe banao (cache file pehle se ho to wahi). Path ya None (ban nahi payi)."""
+    if cache and os.path.exists(path):
+        ui.log("Voice: saved file (cache, no ElevenLabs characters used)")
+        return path
+    # 1st choice: ElevenLabs. Fail ho to backup: edge-tts
+    if _elevenlabs_mp3(clean, path):
+        ui.log(f"Voice: ElevenLabs ({ELEVEN_MODEL})")
+        return path
+    if cache:
+        path = SPEECH_FILE    # edge-tts wali awaaz cache mat karo
+    edge_voice = _pick_voice(clean)
+    try:
+        asyncio.run(edge_tts.Communicate(clean, edge_voice).save(path))
+        ui.log(f"Voice: edge-tts ({edge_voice})")
+        return path
+    except Exception as e:
+        print(f"(Awaaz nahi ban payi: {e})")
+        return None
+
+
+def _play_file(path):
+    """mp3 play karo aur khatam hone tak ruko; bolte waqt orb awaaz ke saath naachta hai."""
+    # Awaaz ka "envelope" pehle se nikaal lo - har 50ms kitni tez hai (0..1)
+    envelope = _loudness_envelope(path)
+    pygame.mixer.music.load(path)
+    pygame.mixer.music.play()
+    while pygame.mixer.music.get_busy():
+        if envelope:
+            pos = pygame.mixer.music.get_pos() // ENVELOPE_MS      # Abhi kaunsa 50ms ka tukda
+            ui.set_level(envelope[min(max(pos, 0), len(envelope) - 1)])
+        pygame.time.wait(40)
+    ui.set_level(0)                 # Bolna khatam - orb shaant
+    pygame.mixer.music.unload()     # File chhodo taaki agli baar overwrite ho sake
+
+
+STREAM_MIN_CHARS = 140      # Isse chhota text ek saath (streaming ka faayda nahi)
+STREAM_CHUNK_CHARS = 220    # Baaki hissa itne-itne characters ke tukdon mein
+
+
+def _split_for_streaming(text):
+    """Lamba text -> [pehla sentence, baaki tukde...]. Chhota text -> [text]."""
+    if len(text) < STREAM_MIN_CHARS:
+        return [text]
+    sentences = re.split(r"(?<=[.!?।])\s+", text)
+    if len(sentences) < 2:
+        return [text]
+    chunks, rest = [sentences[0]], sentences[1:]
+    if len(chunks[0]) < 25 and rest:            # "Ok." jaisa bahut chhota pehla sentence -> agle ke saath
+        chunks[0] += " " + rest.pop(0)
+    cur = ""
+    for sent in rest:
+        if cur and len(cur) + len(sent) > STREAM_CHUNK_CHARS:
+            chunks.append(cur)
+            cur = ""
+        cur = (cur + " " + sent).strip()
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _speak_streaming(chunks, started):
+    """Chunks alag thread mein banate raho; jaise hi pehla ready ho bolna shuru, phir agle."""
+    global last_tts_seconds
+    ready = queue.Queue()
+    tag = f"{os.getpid()}_{int(time.time())}"
+
+    def producer():
+        for i, chunk in enumerate(chunks):
+            ready.put(_make_audio(chunk, os.path.join(tempfile.gettempdir(), f"jarvis_speech_{tag}_{i}.mp3")))
+        ready.put(None)
+
+    threading.Thread(target=producer, daemon=True, name="tts-stream").start()
+
+    first = True
+    while True:
+        path = ready.get()
+        if path is None:
+            break
+        if first:
+            last_tts_seconds = time.time() - started      # Pehla tukda bolne se pehle kitna time laga
+            first = False
+        _play_file(path)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    # Pehla hi tukda ban nahi paya (path None) to loop mein _play_file(None) na chale
+    
+
 def speak(text, cache=False, show=True, private=False):
     """Text ko awaaz mein bolta hai (bolna khatam hone tak rukta hai).
     cache=True: fixed lines (jaise "Yes sir...") ek baar banake save ho jaati
@@ -481,46 +572,22 @@ def speak(text, cache=False, show=True, private=False):
     if not clean:
         return
 
-    path = SPEECH_FILE
-    if cache:
-        # Har line (+ voice) ki apni file - naam text ke hash se banta hai
-        name = hashlib.md5(f"{ELEVEN_VOICE_ID}|{clean}".encode()).hexdigest()
-        path = os.path.join(CACHE_DIR, name + ".mp3")
-
-    # Cache mein file pehle se hai to seedha play karo, warna nayi banao
-    if cache and os.path.exists(path):
-        ui.log("Voice: saved file (cache, no ElevenLabs characters used)")
+    # Lamba text: pehla sentence pehle banao aur bolna shuru karo, baaki peeche banta rahe
+    chunks = [clean] if cache else _split_for_streaming(clean)
+    if len(chunks) > 1:
+        _speak_streaming(chunks, started)
     else:
-        # 1st choice: ElevenLabs. Fail ho to backup: edge-tts
-        if _elevenlabs_mp3(clean, path):
-            ui.log(f"Voice: ElevenLabs ({ELEVEN_MODEL})")
-        else:
-            if cache:
-                path = SPEECH_FILE    # edge-tts wali awaaz cache mat karo
-            edge_voice = _pick_voice(clean)
-            try:
-                asyncio.run(edge_tts.Communicate(clean, edge_voice).save(path))
-                ui.log(f"Voice: edge-tts ({edge_voice})")
-            except Exception as e:
-                print(f"(Awaaz nahi ban payi: {e})")
-                return
+        path = SPEECH_FILE
+        if cache:
+            # Har line (+ voice) ki apni file - naam text ke hash se banta hai
+            name = hashlib.md5(f"{ELEVEN_VOICE_ID}|{clean}".encode()).hexdigest()
+            path = os.path.join(CACHE_DIR, name + ".mp3")
+        path = _make_audio(clean, path, cache)
+        if not path:
+            return
+        last_tts_seconds = time.time() - started
+        _play_file(path)
 
-    last_tts_seconds = time.time() - started
-
-    # Awaaz ka "envelope" pehle se nikaal lo - har 50ms kitni tez hai (0..1),
-    # taaki bolte waqt UI ka orb awaaz ke saath naache
-    envelope = _loudness_envelope(path)
-
-    # pygame se mp3 play karo aur khatam hone tak ruko
-    pygame.mixer.music.load(path)
-    pygame.mixer.music.play()
-    while pygame.mixer.music.get_busy():
-        if envelope:
-            pos = pygame.mixer.music.get_pos() // ENVELOPE_MS      # Abhi kaunsa 50ms ka tukda
-            ui.set_level(envelope[min(max(pos, 0), len(envelope) - 1)])
-        pygame.time.wait(40)
-    ui.set_level(0)                 # Bolna khatam - orb shaant
-    pygame.mixer.music.unload()     # File chhodo taaki agli baar overwrite ho sake
     # Thoda ruko taaki speaker ki goonj khatam ho jaaye - warna mic JARVIS ki
     # apni awaaz ko aapka bolna samajh ke record karna shuru kar deta hai
     pygame.time.wait(POST_SPEECH_GAP_MS)

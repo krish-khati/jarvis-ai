@@ -12,6 +12,7 @@ import inspect                     # Tools ke parameters padh ke Groq ke liye sc
 import json                        # Groq tool arguments JSON mein bhejta hai
 import os                          # Environment variables padhne ke liye
 import re                          # Jawab mein repeat words dhoondhne ke liye
+import threading
 import time                        # Gemini ko kuch der "aaram" dene ke liye
 
 from dotenv import load_dotenv     # .env file se variables load karne ke liye
@@ -41,14 +42,19 @@ if (not GEMINI_KEY or GEMINI_KEY == "your_key_here") and not GROQ_KEY:
 # Model naam .env ke GEMINI_MODEL se aate hain (comma se alag, pehla = sabse pasandida).
 # Koi model 503/429 de to kuch der skip hota hai aur agla try hota hai.
 GEMINI_MODELS = [m.strip() for m in os.getenv("GEMINI_MODEL", "gemini-3.6-flash").split(",") if m.strip()]
-GEMINI_MODEL_REST = {429: 10 * 60, 404: 60 * 60}     # Error code -> kitni der us model ko chhodo
-GEMINI_MODEL_REST_DEFAULT = 3 * 60                   # 503 (high demand) jaise baaki errors
+GEMINI_MODEL_REST = {429: 30 * 60, 503: 30 * 60, 404: 60 * 60}   # Error code -> kitni der us model ko chhodo
+GEMINI_MODEL_REST_DEFAULT = 3 * 60                   # Timeout jaise baaki errors
+GEMINI_CALL_TIMEOUT = 5.0   # Har Gemini HTTP call ka client-side timeout (server deadline min 10s hai, isliye httpx se)
+GEMINI_BUDGET_SECONDS = 3.5                          # Gemini ko itna hi time (tool chala ho to zyada), phir seedha Groq
+GROQ_CALL_TIMEOUT = 3                                # Groq call timeout -> kul brain time ~6s ke andar
+GEMINI_PREFERRED = os.getenv("GEMINI_PREFERRED", "gemini-3.7-flash")   # Roz check hota hai, chale to pehla bana do
 _model_down_until = {}
-gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+gemini_client = (genai.Client(api_key=GEMINI_KEY, http_options=types.HttpOptions(client_args={"timeout": GEMINI_CALL_TIMEOUT}))
+                 if GEMINI_KEY else None)
 
 # Groq (backup brain) - model .env ke GROQ_MODEL se aata hai, code chhedne ki zarurat nahi
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-groq_client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
+groq_client = Groq(api_key=GROQ_KEY, timeout=GROQ_CALL_TIMEOUT, max_retries=0) if GROQ_KEY else None
 # gpt-oss models kitna "soch" ke jawab dein: low / medium / high (low = sabse fast)
 GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low")
 
@@ -68,6 +74,44 @@ def gemini_available():
 def gemini_model():
     """Abhi ka pehla chalne layak Gemini model (sab aaram pe hon to pehla wala)."""
     return (_gemini_models_up() or GEMINI_MODELS)[0]
+
+
+def _probe_preferred_model():
+    """Chupchap ek chhota request: pasandida model (3.7-flash) chalne laga to use pehla bana do."""
+    try:
+        if not gemini_client or GEMINI_PREFERRED not in GEMINI_MODELS:
+            return
+        started = time.time()
+        gemini_client.models.generate_content(model=GEMINI_PREFERRED, contents="ok")
+        took = time.time() - started
+        if took > GEMINI_BUDGET_SECONDS - 1:        # Chalta hai par slow -> pehla banane ka faayda nahi
+            print(f"  (Gemini check: {GEMINI_PREFERRED} chala par slow ({took:.1f}s), order wahi)")
+            return
+        _model_down_until.pop(GEMINI_PREFERRED, None)
+        if GEMINI_MODELS[0] != GEMINI_PREFERRED:
+            GEMINI_MODELS.remove(GEMINI_PREFERRED)
+            GEMINI_MODELS.insert(0, GEMINI_PREFERRED)
+            print(f"  (Gemini check: {GEMINI_PREFERRED} chal raha hai -> ab pehla model)")
+    except Exception as e:
+        print(f"  (Gemini check: {GEMINI_PREFERRED} abhi nahi chala: {str(e)[:60]})")
+
+
+_probe_started = False
+
+
+def _start_daily_probe():
+    """Pehli ask() pe ek daemon thread: 60s baad, phir har 24 ghante mein pasandida model check."""
+    global _probe_started
+    if _probe_started:
+        return
+    _probe_started = True
+
+    def loop():
+        time.sleep(60)
+        while True:
+            _probe_preferred_model()
+            time.sleep(24 * 3600)
+    threading.Thread(target=loop, daemon=True, name="gemini-probe").start()
 
 
 def _model_failed(model, code):
@@ -481,9 +525,48 @@ def continues_spelling(text):
     return bool(toks) and (_is_single(toks[0]) or toks[0].isdigit() or toks[0].lower() in _LETTER_NAMES)
 
 
+def _gemini_all_models(message, out):
+    """Worker thread: models ko order mein try karo. out["reply"] mein jawab ya out["done"] = True."""
+    for model in _gemini_models_up():
+        try:
+            out["reply"] = _tidy(_ask_gemini(message, model))
+            out["model"] = model
+            break
+        except Exception as e:
+            code = getattr(e, "code", None)
+            print(f"  (Gemini {model} error {code or ''}: {str(e)[:100]})")
+            _model_failed(model, code)          # Ye model kuch der ke liye skip
+            if tools.call_log:                  # Tool chal chuka hai -> dusra Gemini nahi, Groq note ke saath
+                break
+    out["done"] = True
+
+
+def _gemini_with_deadline(message):
+    """Gemini ko GEMINI_BUDGET_SECONDS milte hain (tool chal gaya ho to zyada, max 12s). Jawab ya None.
+    Der ho to thread chhod dete hain (uska jawab ignore) aur seedha Groq."""
+    out = {}
+    t = threading.Thread(target=_gemini_all_models, args=(message, out), daemon=True)
+    started = time.time()
+    t.start()
+    while not out.get("done"):
+        waited = time.time() - started
+        limit = 12 if tools.call_log else GEMINI_BUDGET_SECONDS
+        if waited > limit:
+            print(f"  (Gemini {waited:.1f}s mein nahi aaya -> Groq)")
+            out["abandoned"] = True
+            return None
+        time.sleep(0.05)
+    if out.get("reply"):
+        ui.log(f"Brain: Gemini ({out['model']})")
+        return out["reply"]
+    return None
+
+
 def _answer(message):
     """ask() ka asli kaam: shortcut -> Gemini -> Groq."""
     global last_brain
+
+    _start_daily_probe()
 
     # --- 1. Simple command? Bina AI ke seedha chalao (requests bachti hain) ---
     last_brain = "shortcut"      # (pehle set - taaki DirectReply aaye to pata rahe kisne chalaya)
@@ -498,19 +581,11 @@ def _answer(message):
     tools.call_log.clear()       # Is sawaal mein kaunse tools chale, yahan jama honge
     if gemini_available():
         last_brain = "gemini"
-        for model in _gemini_models_up():
-            try:
-                reply = _tidy(_ask_gemini(message, model))
-                last_brain = "gemini"
-                ui.log(f"Brain: Gemini ({model})")
-                _remember(message, reply)
-                return reply
-            except Exception as e:
-                code = getattr(e, "code", None)
-                print(f"  (Gemini {model} error {code or ''}: {str(e)[:120]})")
-                _model_failed(model, code)      # Ye model kuch der ke liye skip
-                if tools.call_log:              # Tool chal chuka hai -> dusra Gemini nahi, Groq note ke saath
-                    break
+        reply = _gemini_with_deadline(message)
+        if reply is not None:
+            last_brain = "gemini"
+            _remember(message, reply)
+            return reply
         if groq_client:
             ui.log("Switched to backup brain")
 
