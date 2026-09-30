@@ -32,3 +32,6 @@ tasks.json.tmp
 
 # Agent ka permission log (sirf tool naam + allow/deny)
 logs/
+
+# Awaaz profile (speaker verification) - personal, kisi API ko nahi jaati
+voice_profile.npy

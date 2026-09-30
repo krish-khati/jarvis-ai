@@ -25,6 +25,7 @@ if sys.stderr is None:
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import brain    # Gemini (dimaag)
+import speaker        # Sirf Krish ki awaaz (enrollment / verify)
 import scheduler      # Reminders / tasks (tasks.json + background thread)
 import notifications  # WhatsApp ke aaye messages (Windows notifications, sirf RAM mein)
 import tools    # Tools (confirm function yahan set karte hain)
@@ -297,6 +298,53 @@ def translator_mode(pair):
     return result
 
 
+def enroll_voice():
+    """"Jarvis meri awaaz yaad karo": 10 vaakya bulwao, har ek ka embedding, average -> voice_profile.npy.
+    Recordings sirf RAM mein (disk pe kabhi nahi), embedding ke baad delete. Purani profile tabhi badalti hai jab nayi ban jaaye."""
+    if not speaker._load():
+        ui.set_state("speaking")
+        voice.speak("Sorry sir, awaaz pehchanne wale models nahi mile.", cache=True)
+        return False
+    aid = next(tools._action_ids)
+    ui.action(aid, "Awaaz yaad karna", "10 vaakya", "running")
+    ui.set_state("speaking")
+    voice.speak("Theek hai sir. Main ek-ek vaakya bolunga, aap use apni normal awaaz mein dohraiye.",
+                edge_voice=voice._pick_voice("theek hai sir"))
+    clips, misses = [], 0
+    for i, sentence in enumerate(speaker.ENROLL_SENTENCES, 1):
+        for attempt in range(2):
+            ui.add_message("ai", f"{i}/{len(speaker.ENROLL_SENTENCES)}: {sentence}")      # HUD pe padh bhi sakein
+            ui.set_state("speaking")
+            voice.speak(sentence, show=False, edge_voice=voice._pick_voice(sentence))   # Free edge-tts (credits nahi)
+            ui.set_state("listening")
+            voice.beep()
+            audio = voice._record_until_silence(wait_seconds=8)        # Na verify, na STT, na disk
+            if audio is not None:
+                samples = speaker.to_float(audio.frame_data)
+                if speaker.speech_only(samples)[1] >= 0.8:
+                    clips.append(samples)
+                    misses = 0
+                    break
+            misses += 1
+            if misses >= 3:
+                break
+        if misses >= 3:
+            break
+    ok, msg, worst = (False, "awaaz nahi suni", 0.0) if misses >= 3 else speaker.build_profile(clips)
+    del clips                                       # Recordings ka koi nishaan nahi
+    ui.set_state("speaking")
+    if not ok:
+        ui.action(aid, "Awaaz yaad karna", msg[:60], "failed")
+        voice.speak("Sir, awaaz yaad nahi ho payi. Shant jagah pe dobara try kariye.", cache=True)
+        return False
+    ui.action(aid, "Awaaz yaad karna", msg, "done")
+    ui.log(f"Voice profile: {msg} (sabse alag vaakya ki samanta {worst:.2f})")
+    voice.speak("Awaaz yaad kar li, sir. Ab main sirf aapki awaaz sunungi." if worst >= 0.35 else
+                "Awaaz yaad kar li, sir, par kuch vaakya alag lage. Shant jagah pe dobara karenge to behtar rahega.",
+                edge_voice=voice._pick_voice("ab main"))
+    return True
+
+
 def active_mode():
     """Jaagne ke baad commands sunta hai.
     Return: "sleep" (wapas sone jao) ya "shutdown" (band karo)."""
@@ -308,11 +356,17 @@ def active_mode():
     announce_missed()                 # Chhoote reminders: "Sir, 2 reminders miss ho gaye the"
 
     last_heard = time.time()     # Aakhri baar kab kuch samajh aaya (auto-sleep ke liye)
+    voice.speaker_strict = True  # Wake ke baad pehli command pe sakht speaker check; phir 20 s follow-up naram
     pending = None               # Spelling sunte waqt aaya alag command (agli baar chalega)
 
     while True:
         announce_messages()      # Jaagte hue naya message aaya ho to batao (reply nahi)
         announce_reminders()     # Reminder ka time aaya ho to bolo
+        if speaker.enroll_requested.is_set():          # HUD ka "Awaaz dobara yaad karo" button
+            speaker.enroll_requested.clear()
+            enroll_voice()
+            last_heard = time.time()
+            continue
         ui.set_state("listening")
         # Utna hi intezaar karo jitna auto-sleep tak bacha hai (max 8s ek baar mein)
         remaining = IDLE_SLEEP_SECONDS - (time.time() - last_heard)
@@ -370,6 +424,12 @@ def active_mode():
             voice.speak("Theek hai sir, zarurat ho to bula lena.", cache=True)
             return "sleep"
 
+        # --- "Jarvis meri awaaz yaad karo" (mic chahiye, isliye yahin; "bhool jao" shortcuts.py mein confirm ke saath) ---
+        if speaker.is_enroll_command(command):
+            enroll_voice()
+            last_heard = time.time()
+            continue
+
         # --- Translator mode: "translator mode on: Hindi se English" (fullmatch, AI ke bina) ---
         pair = translator.parse_on(command)
         if pair:
@@ -410,6 +470,10 @@ def active_mode():
         total = command_stt + brain_seconds + voice.last_tts_seconds
         extra = (f"  (+ confirmation ka intezaar {confirm_wait_seconds:.1f}s alag)"
                  if confirm_wait_seconds else "")
+        verify_s = voice.last_verify_seconds
+        if verify_s:
+            print(f"  [Latency] awaaz check (VAD + denoise + speaker) {verify_s * 1000:.0f} ms, score "
+                  f"{voice.last_verify_score:.2f}" + ("  <-- 300 ms se zyada" if verify_s > 0.3 else ""))
         print(f"  [Latency] Google sunna {command_stt:.1f}s + "
               f"brain ({brain.last_brain}) {brain_seconds:.1f}s + "
               f"awaaz banana {voice.last_tts_seconds:.1f}s = {total:.1f}s{extra}")
@@ -487,6 +551,11 @@ class Api:
         """Esc dabane pe bolna rok do aur window chhupao (background mein chalta rahe)."""
         voice.stop_speaking()
         ui.hide_window()
+
+    def enroll(self):
+        """HUD ka "Awaaz dobara yaad karo" button: voice loop agli baar mein enrollment chalayega."""
+        speaker.enroll_requested.set()
+        return "ok"
 
     def stop(self):
         """HUD ke STOP button / Esc: sirf bolna rok do (window khuli rahe)."""

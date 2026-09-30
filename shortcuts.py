@@ -642,6 +642,21 @@ def _read_command(command, text):
     return None
 
 
+def _voice_profile_command(command):
+    """"Meri awaaz bhool jao" (confirm ke saath, voice + typed dono) / typed "awaaz yaad karo" (mic chahiye)."""
+    import speaker
+    if speaker.is_forget_command(command):
+        if speaker.profile() is None:
+            return "Sir, abhi koi awaaz profile saved nahi hai."
+        if not tools.confirm("Sir, pakka? Aapki awaaz ki profile mita doon? Phir JARVIS kisi ki bhi awaaz sunega."):
+            return "Theek hai sir, awaaz profile waise hi rahegi."
+        speaker.forget()
+        return "Awaaz profile mita di, sir. Ab JARVIS sabki awaaz sunega. Dobara yaad karwane ke liye 'Jarvis meri awaaz yaad karo' boliye."
+    if speaker.is_enroll_command(command):
+        return "Awaaz yaad karne ke liye mic chahiye, sir. 'Jarvis meri awaaz yaad karo' bolke ya HUD ka Voice button dabake shuru kariye."
+    return None
+
+
 def _media_command(text, hi):
     """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
     # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
@@ -707,6 +722,10 @@ def handle(command):
             return ("Abhi mere paas aapke baare mein kuch save nahi hai, sir. "
                     "'Yaad rakhna ki...' bolke kuch bata dijiye.")
         return "Sir, mujhe yaad hai: " + " ".join(f if f.endswith(".") else f + "." for f in facts)
+
+    reply = _voice_profile_command(command)       # Awaaz profile: bhool jao / yaad karo
+    if reply:
+        return reply
 
     reply = _read_command(command, text)          # Padh ke sunao (screen / page link / clipboard)
     if reply:

@@ -31,6 +31,7 @@ import pygame                      # mp3 file play karne ke liye
 
 import stt                         # Speech-to-text: Gemini / Groq Whisper / Google
 import wakeword                    # openWakeWord "hey_jarvis" (main wake word)
+import speaker                     # Sirf Krish ki awaaz (sherpa-onnx; wakeword ke BAAD import: onnxruntime pehle)
 import ui                          # Screen pe status (kya suna, kisne bola)
 
 
@@ -385,8 +386,8 @@ def _record_until_silence(wait_seconds=8, silence_seconds=1.2, max_seconds=15):
                     # Recording = pre-roll (0.5s pehle ka) + tez awaaz wale tukde
                     chunks.extend(recent)
                     speech_time = 0.1 * len(loud_run)
-                elif total_time > wait_seconds:
-                    return None             # Koi kuch nahi bola
+                elif total_time > wait_seconds or speaker.enroll_requested.is_set():
+                    return None             # Koi kuch nahi bola (ya HUD se "awaaz dobara yaad karo" dabaya)
                 continue
 
             chunks.append(data)
@@ -407,11 +408,20 @@ def _record_until_silence(wait_seconds=8, silence_seconds=1.2, max_seconds=15):
     return sr.AudioData(raw, SAMPLE_RATE, 2)   # 2 = 16-bit (2 bytes)
 
 
-def listen_command(wait_seconds=8):
-    """User ka command sunta hai aur text return karta hai.
-    Kuch samajh na aaye ya koi na bole to None return karta hai."""
+# --- Speaker verification (speaker.py): sirf Krish ki awaaz ---
+# Wake word ke turant baad pehli command pe sakht (normal) threshold; uske baad ke follow-up pe naram.
+# main.py wake ke baad speaker_strict = True karta hai; ek verified command ke baad False.
+speaker_strict = False
+last_verify_seconds = 0.0       # Pichli command mein verify + denoise ka time ([Latency] line ke liye)
+last_verify_score = None
 
-    global last_stt_seconds, _said_not_understood, _need_beep
+
+def listen_command(wait_seconds=8, verify=True):
+    """User ka command sunta hai aur text return karta hai.
+    Kuch samajh na aaye, koi na bole, ya awaaz Krish ki na ho (STT bulaya hi nahi jaata) to None.
+    verify=False: speaker check nahi (jaise enrollment). Barge-in ("stop") pe check kabhi nahi lagta."""
+
+    global last_stt_seconds, _said_not_understood, _need_beep, speaker_strict, last_verify_seconds, last_verify_score
     # JARVIS abhi bola tha -> beep bajao taaki pata chale ab bolna hai
     # (khaali intezaar ke baad dobara sunte waqt beep nahi - warna har 8s beep)
     if _need_beep:
@@ -420,6 +430,17 @@ def listen_command(wait_seconds=8):
     audio = _record_until_silence(wait_seconds=wait_seconds)
     if audio is None:
         return None
+    last_verify_seconds, last_verify_score = 0.0, None
+    if verify and speaker.enabled():
+        # VAD -> noise suppression -> speaker check. Match nahi to STT call hi nahi, chupchap ignore
+        ok, score, secs, keep = speaker.verify(speaker.to_float(audio.frame_data), followup=not speaker_strict)
+        last_verify_seconds, last_verify_score = speaker.last_seconds, score
+        if not ok:
+            ui.log(f"Awaaz match nahi (score {score:.2f})")
+            return None
+        speaker_strict = False                 # Pehli command verify ho gayi -> ab follow-up wala naram threshold
+        if speaker.DENOISE_STT:                # DENOISE_STT=1 ho to saaf (VAD + denoised) audio STT ko
+            audio = sr.AudioData((np.clip(keep, -1, 1) * 32767).astype(np.int16).tobytes(), SAMPLE_RATE, 2)
     started = time.time()     # Latency: text banane mein kitna laga
 
     # stt.py: Gemini transcribe / Groq Whisper / Google - .env ke STT_ORDER ke hisaab se,
