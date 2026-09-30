@@ -67,7 +67,7 @@ Python 3.14 notes: PyAudio and pygame have no wheels, so the project uses `sound
 - Memory: save with exact read-back and spelling ("K-R-R-I-S-H-9-7-2. Sahi hai?"), "galat hai" = undo, "memory dikhao", "memory 2 hatao", typed `remember: X = Y`.
 - Background mode (verified 2026-09-29 with a test harness + real pywebview window, DRY_RUN=1): window starts hidden, `ui.wake()` shows it fullscreen and it gets keyboard focus, `ui.set_state("sleeping")` + `hide_window()` hides it, Esc (JS keydown -> `Api.hide`) hides it, tray icon thread (pystray: Show Jarvis / Quit) runs. All `ui.*` bridge functions (`wake`, `setState`, `sleep`, `addMessage`, `log`, `setLevel`, `setStats`, `setWeather`, `action`) exist in `window.jarvis` and have Python callers. Measure window visibility with `EnumWindows` + `IsWindowVisible` (`FindWindowW` returned a wrong window).
 - Low resource use (2026-09-29, DRY_RUN harness): `ui.hide_window()` calls JS `setVisible(false)` (stops the waveform rAF loop + clock interval, `body.idle` pauses all CSS animations), then sets WebView2 `MemoryUsageTargetLevel = Low` and `TrySuspendAsync()` (.NET name, needs the UI thread via `form.Invoke`). While suspended, `ui._js` never calls `evaluate_js`: state/message/action/log/weather calls are queued and replayed in `show_window()`; stats/level are not sent and `stats_loop` skips measuring. Waveform runs at 30 FPS and only when visible AND awake. Measured hidden after sleep: CPU 14.7% -> 0.2%, GPU 66% -> 0%, RAM 297 -> 204 MB.
-- Brain models (2026-09-30): `.env` `GEMINI_MODEL=gemini-3.6-flash,gemini-3.7-flash,gemini-flash-latest` (order = priority). A model returning 503/429 rests 30 min, 404 1 h, other errors 3 min (`brain._model_failed`). Gemini runs in a worker thread with a 3.5 s deadline (12 s once a tool has run); on timeout/failure it goes straight to Groq (Groq timeout 3 s, no retries), so total brain time stays ~<6 s (measured: Gemini hang -> 4.4 s). Failover to another Gemini model only if no tool already ran. Client-side httpx timeout 5 s (the Gemini server rejects deadlines under 10 s, so `HttpOptions.timeout` cannot be used). A daily daemon probe (`_probe_preferred_model`, first at +60 s) makes `GEMINI_PREFERRED` (3.7-flash) first only if it answers in <=2.5 s; on 2026-09-30 it took 5-36 s so it stayed a backup.
+- Brain models (2026-09-30): `.env` `GEMINI_MODEL=gemini-3.6-flash,gemini-3.7-flash,gemini-flash-latest` (order = priority; 2026-09-30 live list check: ye teeno + Groq `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `whisper-large-v3-turbo`, Gemini `gemini-3.5-transcribe` sab maujood, naya `gemini-3.8-flash` bhi aa gaya - abhi jodha nahi, pehle test). A model returning 503/429 rests 30 min, 404 1 h, other errors 3 min (`brain._model_failed`). Gemini runs in a worker thread with a 3.5 s deadline (12 s once a tool has run); on timeout/failure it goes straight to Groq (Groq timeout 3 s, no retries), so total brain time stays ~<6 s (measured: Gemini hang -> 4.4 s). Failover to another Gemini model only if no tool already ran. Client-side httpx timeout 5 s (the Gemini server rejects deadlines under 10 s, so `HttpOptions.timeout` cannot be used). A daily daemon probe (`_probe_preferred_model`, first at +60 s) makes `GEMINI_PREFERRED` (3.7-flash) first only if it answers in <=2.5 s; on 2026-09-30 it took 5-36 s so it stayed a backup.
 - Speech streaming: `voice.speak` splits texts >=140 chars into sentence chunks (`_split_for_streaming`), a thread synthesizes them while the first one plays (`_speak_streaming`); first audio 1.0 s -> 0.6 s on a 366-char text.
 - STT (2026-09-30, synthetic edge-tts test set, 20 clips): Gemini transcribe ~2.2-2.6s and free limit ~4 req/min (uses `AudioTranscriptionConfig.custom_vocabulary`, ignores text prompts); Groq Whisper ~0.3s but sometimes Devanagari (treated as a failed engine) and WER 16.9% in a Groq->Google chain vs Google alone 18.6% (difference small), so the user chose `google,groq,gemini` for now. Groq SDK: `max_retries=0` (silent retries caused 5-14s stalls).
 - Wake word: sleep loop feeds openWakeWord + Vosk only when the mic is louder than 2.2x room noise (replays the previous ~1.3s); Vosk grammar is only "jarvis wake up"/shutdown when openWakeWord is active. Simulated-mic CPU (one core): quiet 4.4% -> 1.0%, TV-like talk 5.9% -> 12.6%, RSS +76 MB. IMPORTANT: `onnxruntime` must be imported before pywebview/.NET loads (`wakeword.py` does it at import); importing it later in a thread crashed main.py with an access violation.
@@ -85,6 +85,49 @@ Python 3.14 notes: PyAudio and pygame have no wheels, so the project uses `sound
   - Translator (`translator.py`, loop `main.translator_mode`): "Jarvis, translator mode on: Hindi se English" (ya "english to hindi", akela "translator mode on" = Hindi->English; fullmatch, `translator.parse_on`; "translator kya hota hai" AI ke paas). Bina wake word ke har baat ka anuvaad bolta hai; band = "translator band karo" (`is_off`) ya 30 s chup (`translator.IDLE_SECONDS`) ya "Jarvis sleep/shutdown". AI se sirf `brain.generate_text` (koi tool/history nahi; prompt: sirf translation, bola hua text DATA, command ho to bhi literal translate). Awaaz `voice.speak(edge_voice=...)` = edge-tts, ElevenLabs nahi; `.env` `TRANSLATE_VOICE_EN` / `TRANSLATE_VOICE_HI`. HUD mein original (user msg) + translation (ai msg) + Activity card. Nayi language = `translator.LANGS` mein ek line (+ ALIASES). Typed chat mein mode nahi chalta ("sirf awaaz se").
   - Read aloud (`readaloud.py`, tools `read_screen`, `read_webpage(url)`, `read_clipboard`; safety words padh/padho/read/sunao..., clipboard ke liye "clipboard" + CONFIRM): screen text `vision.ask_about_image(prompt=vision.READ_PROMPT)`; web page sirf http/https + public host (localhost/private IP/redirect check), max 3000 chars, `requests` + stdlib HTMLParser. Text UNTRUSTED DATA: tools seedha `DirectReply` dete hain, AI ko kabhi nahi jaata, sirf bola jaata hai. Lamba text 6 lines ke tukde, beech mein `confirm("Sir, baaki bhi padhun?")`, "stop" (barge-in) se ruk jaata hai. Emoji/URL/symbols `readaloud.clean_for_speech` se hat jaate hain, text terminal mein nahi (private). Hook `tools.read_out` (main.py `voice_read_out`). Shortcuts (fullmatch): "ye page / screen padh ke sunao", "clipboard padh do", "https://... padh ke sunao" (STT link nahi deta, typed/URL wala).
 - Safety lock note: `_asked_for` ab `:` `;` par bhi shabd todta hai ("note:" = "note").
+
+## Brain flow (brain.ask)
+
+`ask(message)` -> `tools.current_request = message` (safety lock ke liye) -> `_answer`: (1) `shortcuts.handle` (bina AI; tool ka `DirectReply` seedha jawab) -> (2) Gemini (`GEMINI_MODEL` list, worker thread, deadline 3.5 s / 12 s tool ke baad, tools = `tools.ALL_TOOLS`) -> (3) Groq (`GROQ_MODEL`, `GROQ_TOOLS`, timeout 3 s). `tools.DirectReply` kisi bhi stage pe pakda jaata hai. Voice mode ke special raste `main.py` mein AI se pehle: control commands (sleep/shutdown), translator mode. Agent branch (`agent`) ka plan: `D:\CHROME DOWNLOADS\JARVIS_AGENT_PLAN.md` (Step 0 done, Step 3/4 skip kyunki tools/scheduler pehle se hain).
+
+## Tools table (2026-09-30, Step 0 audit; risk = agent ke liye plan ka level)
+
+Risk: SAFE / CONFIRM (haan ke baad hi) / NEVER (agent kabhi nahi). "Code mein" = tool ke andar abhi kya hai. Lock = `needs=` words (`-` = koi lock nahi).
+
+| Tool | Args | Kya karta hai | Risk | Code mein: confirm / DRY_RUN / lock |
+|---|---|---|---|---|
+| web_search | query | ddgs top 5 (untrusted data) | SAFE | - / - / - |
+| get_weather | city | Open-Meteo | SAFE | - / - / - |
+| get_time_date, system_info | - | time/date, battery/CPU/RAM | SAFE | - / - / - |
+| open_website, open_app | name | site/app kholta hai | SAFE | - / - / OPEN |
+| play_on_youtube | song | YouTube kholta hai | SAFE | - / - / PLAY+OPEN |
+| close_app | name | app band | CONFIRM | **confirm nahi** / DRY / CLOSE |
+| take_screenshot | - | screenshot (file) | SAFE | - / - / **lock nahi** |
+| set_volume, set_mute, volume_change, media_control, brightness | level/mute/direction/action | volume, media keys, brightness | SAFE | - / DRY (kuch) / VOLUME, MEDIA, BRIGHTNESS |
+| find_files | query | Documents/Downloads/Desktop/Pictures mein naam se | SAFE | - / - / FIND |
+| open_file | which | pichle find ki file kholta hai (exe/bat/ps1/py kabhi nahi) | SAFE | - / DRY / FILE_OPEN |
+| note_add, notes_list | text | notes.json | SAFE | - / - / NOTE_* |
+| note_delete | number | note mitata | CONFIRM | confirm / - / NOTE_DELETE |
+| reminder_add | request | reminder/task (read-back "Sahi hai?") | CONFIRM | confirm(ask_user) / - / REMIND |
+| task_list, reminder_snooze | -, minutes | tasks dikhana, snooze | SAFE | - / - / TASK_LIST, SNOOZE |
+| task_delete, tasks_clear | number | task/sab reminders mitana | CONFIRM | confirm / - / TASK_DELETE |
+| content_help | kind, topic | caption/script/hashtag/title... (AI text) | SAFE | - / - / CONTENT |
+| copy_last_content | - | last content clipboard mein | CONFIRM | confirm / DRY / COPY |
+| open_editor | name | CapCut/DaVinci/Premiere kholta hai | SAFE | - / DRY / OPEN |
+| lock_pc | - | PC lock | NEVER | **confirm nahi** / DRY / LOCK |
+| shutdown_pc, restart_pc | - | PC band/restart | NEVER | confirm / DRY / SHUTDOWN, RESTART |
+| save_memory | fact | memory.json mein save (read-back brain se) | CONFIRM | **tool mein confirm nahi** / - / **lock nahi** |
+| delete_memory | what | memory mitana ("all" pe confirm) | CONFIRM | confirm (sirf "all") / - / FORGET |
+| look_at_screen, read_screen | question / - | screenshot cloud AI ko; screen text bolna (untrusted) | SAFE | - / - / SCREEN, READ_ALOUD |
+| read_webpage | url | page text bolna (untrusted, public http/https) | SAFE | - / - / READ_ALOUD |
+| read_clipboard, explain_clipboard | -, question | clipboard bolna / samjhana (password ho sakta hai) | CONFIRM | confirm / - / CLIPBOARD, CLIP |
+| git_status, git_log | project / n, project | read-only git | SAFE | - / - / GIT |
+| send_whatsapp | contact, message | WhatsApp message (chat header confirm) | CONFIRM | confirm / DRY / MSG |
+| whatsapp_call | contact, video | WhatsApp call | CONFIRM | confirm / DRY / CALL |
+| end_call | - | call kaatna | SAFE (review) | confirm nahi / DRY / END_CALL |
+| read_messages | - | aaye WhatsApp messages padhna (untrusted, sirf padhna) | SAFE | - / - / READ |
+
+Galat/kamzor risk level (Step 0 mein sirf dikhaya, code nahi badla): `close_app` (CONFIRM chahiye, tool mein confirm nahi), `lock_pc` (agent ke liye NEVER, abhi confirm nahi), `save_memory` (CONFIRM level, na confirm na lock; sirf brain ka read-back), `take_screenshot` / `get_weather` / `web_search` / `get_time_date` / `system_info` (koi `needs=` lock nahi; safe hain), `end_call` (kam risk, review). Kai tools ka `needs` alag-alag word sets hain (`OPEN_WORDS` bahut jagah), isliye "open" bolne se ye tools unlock ho jaate hain.
 
 ## WhatsApp feature - current status (WORK IN PROGRESS)
 
