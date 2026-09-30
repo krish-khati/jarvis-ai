@@ -433,6 +433,34 @@ def _files_command(text, hi):
     return None
 
 
+# ============================================
+# Notes: "note likho: kal Rahul se milna hai", "mere notes padho", "note 2 hata do"
+#   Sab fullmatch. "note kya hota hai" / "notes app kholo" shortcut nahi bante.
+#   Note ka text lowercase nahi hona chahiye, isliye add ke liye asli command use hota hai.
+# ============================================
+NOTE_LIST = re.compile(
+    r"(?:(?:mere|meri|saare|sab) )?notes?(?: (?:ko))? (?:padho|padh do|padh ke sunao|sunao|dikhao|batao)"
+    r"|read (?:my |the )?notes|(?:mere )?notes? kya kya hain")
+NOTE_DELETE = re.compile(
+    r"notes? (?P<n>\d{1,3}) (?:hata do|hatao|hata de|delete karo|delete kar do|mita do|remove karo)"
+    r"|(?:delete|remove) (?:the )?note (?P<n2>\d{1,3})")
+
+
+def _notes_command(command, text, hi):
+    """Note likhna / padhna / hatana (bina AI). Tools khud DirectReply + confirm sambhalte hain.
+    Jawab (text) ya None (AI ke paas jaao)."""
+    m = tools.NOTE_ADD_RX.match(command or "")
+    if m:
+        result = tools.note_add(m["t"])      # Sahi chale to DirectReply uthta hai (read-back)
+        return f"Sorry sir, {result}"        # Yahan sirf error / BLOCKED pe pahunchte hain
+    if NOTE_LIST.fullmatch(text):
+        return f"Sorry sir, {tools.notes_list()}"
+    m = NOTE_DELETE.fullmatch(text)
+    if m:
+        return f"Sorry sir, {tools.note_delete(int(m['n'] or m['n2']))}"
+    return None
+
+
 def _media_command(text, hi):
     """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
     # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
@@ -567,6 +595,10 @@ def handle(command):
 
     # --- Media keys / volume relative / brightness (app/website se PEHLE, warna "chalu karo"
     #     wali commands galat jagah chali jaati hain) ---
+    reply = _notes_command(command, text, hi)      # Notes: text asli command se (lowercase nahi)
+    if reply:
+        return reply
+
     reply = _files_command(text, hi)      # Files pehle: "downloads mein pdf kholo" open-app se na takraye
     if reply:
         return reply

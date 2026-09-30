@@ -407,7 +407,8 @@ def listen_command(wait_seconds=8):
     text, engine = stt.transcribe(audio)
     last_stt_seconds = time.time() - started
     if text:
-        ui.log(f"Heard ({engine}, {last_stt_seconds:.1f}s): {text}")
+        import tools    # Yahin import (circular se bachne ke liye)
+        ui.log(f"Heard ({engine}, {last_stt_seconds:.1f}s): {tools.mask_private(text)}")
         _said_not_understood = False
         return text
 

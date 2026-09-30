@@ -21,3 +21,7 @@ memory.json.broken
 __pycache__/
 
 stt_usage.json
+
+# JARVIS ke notes - personal, GitHub pe nahi jaane chahiye
+notes.json
+notes.json.tmp

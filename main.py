@@ -236,7 +236,7 @@ def active_mode():
             command = f"{command} {more}"
 
         last_heard = time.time()
-        print(f"Krish: {command}")
+        print(f"Krish: {tools.mask_private(command)}")
         ui.add_message("user", command)
         heard_at = time.time()        # Latency yahan se ginna shuru (command sun liya)
         command_stt = voice.last_stt_seconds   # (confirm wala sunna baad mein isse overwrite kar deta)
@@ -339,7 +339,7 @@ class Api:
         text = (text or "").strip()
         if not text:
             return ""
-        print(f"Krish (typed): {text}")
+        print(f"Krish (typed): {tools.mask_private(text)}")
         with brain_lock:
             # Type karke poocha hai to "Sir, pakka?" bhi screen pe poocho, bol ke nahi
             old_confirm, tools.confirm = tools.confirm, ui_confirm

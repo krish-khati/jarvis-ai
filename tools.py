@@ -14,6 +14,7 @@ import datetime            # Time aur date ke liye
 import functools           # Decorator banane ke liye (neeche @tool dekho)
 import inspect             # Tool ke parameters ke naam padhne ke liye (UI message mein)
 import itertools           # Activity panel ke liye kaam ke number (1, 2, 3...)
+import json                # Notes ko notes.json mein save karne ke liye
 import os                  # Files, folders, apps kholne ke liye
 import re                  # Message mein words dhoondhne ke liye (safety lock)
 import subprocess          # Windows commands chalane ke liye
@@ -137,7 +138,7 @@ BRIGHTNESS_WORDS = {"brightness", "roshni", "roshniyan", "dim", "bright",
 def _asked_for(words):
     """True agar current_request mein in words mein se koi ho."""
     text = current_request.lower()
-    tokens = set(re.findall(r"[^\s.,!?।]+", text))
+    tokens = set(re.findall(r"[^\s.,!?।:;]+", text))
     return any((w in text) if " " in w else (w in tokens) for w in words)
 
 
@@ -822,6 +823,95 @@ def open_file(which: str) -> str:
 
 
 # ============================================
+# 9c. NOTES - "note likho: kal Rahul se milna hai", "mere notes padho", "note 2 hata do"
+#   notes.json mein (gitignore hai). PRIVACY: note ka text terminal/log mein kabhi nahi
+#   chhapta (tool ka message/card mein text nahi, jawab private_reply se) - sirf awaaz + HUD.
+#   Note numbers poori list ke hain (1 = sabse purana), "padho" aakhri 5 dikhata hai.
+# ============================================
+NOTE_ADD_WORDS = {"note", "notes", "likho", "likh", "yaad"}
+NOTE_LIST_WORDS = {"note", "notes", "padho", "padh", "sunao", "dikhao", "batao", "read"}
+NOTE_DELETE_WORDS = {"note", "notes", "hata", "hatao", "delete", "remove", "mita", "mitao"}
+NOTES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notes.json")
+MAX_NOTE_CHARS = 500
+# "Note likho: ..." jaisa command - text chhupane ke liye (main.py / voice.py isse pehchante hain)
+NOTE_ADD_RX = re.compile(r"^\s*(?:(?:hey\s+)?jarvis[\s,]+)?(?:(?:ye|is|ek|a)\s+)?"
+                         r"(?:(?:note|notes)\s+(?:likho|likh do|likh lo|add karo|save karo)|"
+                         r"(?:take|add|make)\s+a\s+note(?:\s+that)?|note\s+down)\s*[:,\-]?\s*(?P<t>.+?)\s*$",
+                         re.IGNORECASE | re.DOTALL)
+
+
+def mask_private(text):
+    """Terminal/log ke liye: note likhwane wale command ka text chhupa do, baaki jaisa hai waisa."""
+    return "(note likhwa rahe hain - text chhupa hai)" if NOTE_ADD_RX.match(str(text or "")) else text
+
+
+def _notes_load():
+    """notes.json padho. File na ho to []. Kharab ho to error (overwrite nahi - notes na jayein)."""
+    try:
+        with open(NOTES_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except FileNotFoundError:
+        return []
+    except json.JSONDecodeError:
+        raise ValueError("notes.json kharab ho gayi hai - VS Code mein theek karo")
+
+
+def _notes_save(notes):
+    """Pehle temp file mein likho, phir badlo - beech mein band ho to bhi purane notes bache rahein."""
+    tmp = NOTES_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(notes, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, NOTES_FILE)
+
+
+@tool("Saving note...", needs=NOTE_ADD_WORDS)
+def note_add(text: str) -> str:
+    """Save a short note for Krish (into notes.json) and read it back. ONLY use when Krish clearly
+    asks to write/save a note ('note likho', 'note kar lo', 'take a note'). text = the note itself."""
+    global private_reply
+    text = " ".join(str(text or "").split())[:MAX_NOTE_CHARS]
+    if not text:
+        return "Could not save note: the note text is empty."
+    notes = _notes_load()
+    notes.append({"text": text, "time": datetime.datetime.now().strftime("%d %b %Y %H:%M")})
+    _notes_save(notes)
+    private_reply = True       # Note ka text terminal mein nahi dikhega
+    raise DirectReply(f"Note likh liya: {text}.")
+
+
+@tool("Reading notes...", needs=NOTE_LIST_WORDS)
+def notes_list() -> str:
+    """Read out Krish's last 5 saved notes (with their numbers). Use for 'mere notes padho'."""
+    global private_reply
+    notes = _notes_load()
+    if not notes:
+        raise DirectReply("Sir, abhi koi note save nahi hai.")
+    start = max(0, len(notes) - 5)
+    parts = [f"Note {i}: {n['text']}" for i, n in enumerate(notes[start:], start + 1)]
+    private_reply = True       # Note ka text terminal mein nahi dikhega
+    head = f"Sir, aapke {len(notes)} notes hain" + (", aakhri 5 ye hain. " if len(notes) > 5 else ". ")
+    raise DirectReply(head + ". ".join(parts) + ".")
+
+
+@tool("Deleting note {number}...", needs=NOTE_DELETE_WORDS)
+def note_delete(number: int) -> str:
+    """Delete one saved note by its number (as read out by notes_list). Asks Krish to confirm first."""
+    notes = _notes_load()
+    try:
+        n = int(number)
+    except (TypeError, ValueError):
+        return "Could not delete note: the note number must be a number."
+    if not 1 <= n <= len(notes):
+        return f"Could not delete note: there is no note number {n} (Krish has {len(notes)} notes)."
+    if not confirm(f"Sir, note {n} hata doon?"):        # Confirm ke baad hi (text sawaal mein nahi)
+        raise DirectReply("Theek hai sir, note nahi hataya.")
+    notes.pop(n - 1)
+    _notes_save(notes)
+    raise DirectReply(f"Note {n} hata diya, sir.")
+
+
+# ============================================
 # 10. PC LOCK
 # ============================================
 @tool("Locking PC...", needs=LOCK_WORDS)
@@ -1170,6 +1260,7 @@ ALL_TOOLS = [
     web_search, get_weather, open_website, play_on_youtube, open_app, close_app,
     get_time_date, system_info, take_screenshot, set_volume, set_mute, volume_change,
     media_control, brightness, find_files, open_file,
+    note_add, notes_list, note_delete,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen,
     send_whatsapp, whatsapp_call, end_call, read_messages,
