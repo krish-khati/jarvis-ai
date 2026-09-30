@@ -461,6 +461,46 @@ def _notes_command(command, text, hi):
     return None
 
 
+# ============================================
+# Reminders / tasks: "10 minute baad yaad dilana ki ...", "meri tasks dikhao", "task 2 hata do",
+#   "sab reminders hata do", "snooze 10 minute". Sab fullmatch / pakke pehchan wale.
+# ============================================
+TASK_LIST_CMD = re.compile(
+    r"(?:(?:mere|meri|saare|sab|apne) )?(?:tasks?|reminders?)(?: ko)? (?:dikhao|dikha do|padho|sunao|batao|kya kya hain)"
+    r"|(?:show|list) (?:my |all )?(?:tasks|reminders)")
+TASK_DELETE_CMD = re.compile(
+    r"(?:task|reminder) (?P<n>\d{1,3}) (?:hata do|hatao|hata de|delete karo|delete kar do|mita do|cancel karo)"
+    r"|(?:delete|remove|cancel) (?:the )?(?:task|reminder) (?P<n2>\d{1,3})")
+TASK_CLEAR_CMD = re.compile(
+    r"(?:sab|saare|all|sabhi) (?:tasks?|reminders?|tasks aur reminders)(?: ko)? (?:hata do|hatao|mita do|delete karo|clear karo)"
+    r"|(?:delete|clear|remove) all (?:tasks|reminders)")
+SNOOZE_CMD = re.compile(
+    r"snooze(?: (?P<d1>.+))?|(?P<d2>.+?) snooze(?: karo| kar do)?"
+    r"|(?P<d3>.+? baad) phir (?:se )?(?:yaad dilana|yaad dila dena|yaad dilao)")
+
+
+def _tasks_command(command, text, hi):
+    """Reminders / tasks (bina AI). Tools khud confirm + DirectReply sambhalte hain.
+    Jawab (text) ya None (AI ke paas jaao)."""
+    import scheduler
+    m = SNOOZE_CMD.fullmatch(text)
+    if m:
+        dur = m["d1"] or m["d2"] or m["d3"]
+        minutes = 10 if not dur else scheduler.parse_duration(dur if "baad" in dur else dur + " baad")
+        if minutes is not None:
+            return f"Sorry sir, {tools.reminder_snooze(round(minutes))}"
+    if TASK_CLEAR_CMD.fullmatch(text):
+        return f"Sorry sir, {tools.tasks_clear()}"
+    m = TASK_DELETE_CMD.fullmatch(text)
+    if m:
+        return f"Sorry sir, {tools.task_delete(int(m['n'] or m['n2']))}"
+    if TASK_LIST_CMD.fullmatch(text):
+        return f"Sorry sir, {tools.task_list()}"
+    if scheduler.looks_like_reminder(text):
+        return f"Sorry sir, {tools.reminder_add(command)}"
+    return None
+
+
 def _media_command(text, hi):
     """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
     # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
@@ -596,6 +636,10 @@ def handle(command):
     # --- Media keys / volume relative / brightness (app/website se PEHLE, warna "chalu karo"
     #     wali commands galat jagah chali jaati hain) ---
     reply = _notes_command(command, text, hi)      # Notes: text asli command se (lowercase nahi)
+    if reply:
+        return reply
+
+    reply = _tasks_command(command, text, hi)      # Reminders / tasks
     if reply:
         return reply
 

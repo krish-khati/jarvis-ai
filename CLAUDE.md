@@ -46,6 +46,7 @@ Windows startup (user runs this, Claude must not install it on its own):
 | `tools.py` | All tools with `@tool` decorator (UI log + action card + safety lock + try/except), `DRY_RUN`, `DirectReply(ok=...)`, `confirm` / `ask_user` hooks, weather (Open-Meteo), vision, memory, WhatsApp tools |
 | `memory.py` | Long-term memory in `memory.json` (gitignored): add/update/undo/remove, numbered list, spelled read-back |
 | `vision.py` | Screenshot in RAM (mss, max 1280px) → Gemini, fallback Groq vision (qwen) |
+| `scheduler.py` | Reminders/tasks: Hinglish time parser (`parse_request`: "10 minute baad", "dedh ghante", "kal subah 7 baje", "har roz raat 10 baje"; time adhoora = `ask`, andaza nahi), `tasks.json` (gitignored; id/when/what/repeat/kind), ek daemon thread jo har 20 s check karta hai. Awake -> `due` queue (main.py voice thread bolti hai), sleep -> `hooks["sleep"]` (`voice.chime()` + `ui.notify`, JARVIS jagta nahi), startup pe chhoote = `missed` ("Sir, 2 reminders miss ho gaye the"), `snooze()`. Env `JARVIS_TASKS_FILE` se test file |
 | `whatsapp.py` | WhatsApp Desktop UI automation with pywinauto (search, open chat, send, call, end call) |
 | `notifications.py` | Reads WhatsApp notifications from Windows (pywinrt `UserNotificationListener`), kept only in RAM |
 | `ui.py` | Terminal print + `window.jarvis` bridge (`setState`, `log`, `wake`, `sleep`, `addMessage`, `setStats`, `setWeather`, `action`, `setLevel`), window show/hide |
@@ -70,6 +71,13 @@ Python 3.14 notes: PyAudio and pygame have no wheels, so the project uses `sound
 - STT (2026-09-30, synthetic edge-tts test set, 20 clips): Gemini transcribe ~2.2-2.6s and free limit ~4 req/min (uses `AudioTranscriptionConfig.custom_vocabulary`, ignores text prompts); Groq Whisper ~0.3s but sometimes Devanagari (treated as a failed engine) and WER 16.9% in a Groq->Google chain vs Google alone 18.6% (difference small), so the user chose `google,groq,gemini` for now. Groq SDK: `max_retries=0` (silent retries caused 5-14s stalls).
 - Wake word: sleep loop feeds openWakeWord + Vosk only when the mic is louder than 2.2x room noise (replays the previous ~1.3s); Vosk grammar is only "jarvis wake up"/shutdown when openWakeWord is active. Simulated-mic CPU (one core): quiet 4.4% -> 1.0%, TV-like talk 5.9% -> 12.6%, RSS +76 MB. IMPORTANT: `onnxruntime` must be imported before pywebview/.NET loads (`wakeword.py` does it at import); importing it later in a thread crashed main.py with an access violation.
 - HUD: states, waveform with real voice level, stats (CPU/RAM/battery/disk/net), weather panel, activity cards, conversation, dock buttons, typed commands.
+
+## Files, Notes, Reminders (branch features2, DRY_RUN=1 smoke tested)
+
+- Files (`tools.find_files` / `open_file`): sirf Documents/Downloads/Desktop/Pictures, sirf naam (content nahi), max 8, naya pehle; `open_file` sirf pichle find ke result se, `.exe/.bat/.ps1/.py...` kabhi nahi kholta; DRY_RUN mein sirf print. Shortcuts: "downloads mein latest pdf kholo" ("latest" = sabse nayi ek file, seedha khulti hai; baaki mein kai match ho to naam bolke poochta hai), "resume file dhoondo", "pehli wali kholo".
+- Notes (`note_add` / `notes_list` / `note_delete`, `notes.json` gitignored): read-back "Note likh liya: ...", delete confirm ke baad. PRIVACY: note ka text terminal/log mein nahi (`tools.mask_private` masks "Krish:" / "Heard" lines, reply `private_reply`). Notes DRY_RUN mein bhi save hote hain (PC-control nahi), tests `tools.NOTES_FILE` temp file pe.
+- Reminders (`reminder_add`, `task_list`, `task_delete`, `tasks_clear`, `reminder_snooze` + `scheduler.py`): save se pehle read-back + "Sahi hai?" (`ask_user`), haan pe hi save. Kaam wale reminder ("weather batana") awake mein `brain.ask` se chalte hain, par WhatsApp/call/shutdown jaise words hon to pehle Krish se poochta hai (`main._RISKY_REMINDER`); tools ke apne confirm bhi lagte hain. Sleep mein sirf chime + HUD toast + tray notification (window fullscreen nahi). `main.voice_loop` `scheduler.awake` set/clear karta hai.
+- Safety lock note: `_asked_for` ab `:` `;` par bhi shabd todta hai ("note:" = "note").
 
 ## WhatsApp feature - current status (WORK IN PROGRESS)
 

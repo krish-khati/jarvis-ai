@@ -111,6 +111,26 @@ def beep():
         pygame.time.wait(10)
     ui.log("Beep (listening started - ab boliye)")
 
+_chime_sound = None
+
+
+def chime():
+    """Halka do-note chime (reminder sleep mein aaye tab) - beep se dheema aur alag. Khatam hone tak ruko."""
+    global _chime_sound
+    if _chime_sound is None:
+        rate, _, channels = pygame.mixer.get_init()
+        tone = lambda f: np.sin(2 * np.pi * f * np.arange(int(rate * 0.22)) / rate)
+        wave = np.concatenate([tone(660), tone(880)]) * 0.12
+        wave *= np.minimum(1, np.minimum(np.arange(len(wave)), np.arange(len(wave))[::-1]) / (rate * 0.02))
+        samples = (wave * 32767).astype(np.int16)
+        if channels == 2:
+            samples = np.column_stack([samples, samples])
+        _chime_sound = pygame.sndarray.make_sound(samples)
+    ch = _chime_sound.play()
+    while ch is not None and ch.get_busy():
+        pygame.time.wait(10)
+
+
 # Bolne wali awaaz yahan save hogi
 SPEECH_FILE = os.path.join(tempfile.gettempdir(), "jarvis_speech.mp3")
 

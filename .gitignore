@@ -25,3 +25,7 @@ stt_usage.json
 # JARVIS ke notes - personal, GitHub pe nahi jaane chahiye
 notes.json
 notes.json.tmp
+
+# Reminders / tasks - personal
+tasks.json
+tasks.json.tmp

@@ -301,6 +301,12 @@ body.snap, body.snap * { transition: none !important; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001s !important; animation-iteration-count: 1 !important; transition-duration: 0.001s !important; }
 }
+  /* Reminder toast: chhota, window fullscreen nahi hoti */
+  #toast { position: fixed; top: 18px; right: 18px; max-width: 340px; padding: 10px 14px; z-index: 50;
+    border: 1px solid rgba(0,229,255,.55); background: rgba(2,10,20,.88); color: #bfefff;
+    font: 13px/1.35 "Segoe UI", sans-serif; letter-spacing: .03em; opacity: 0; transform: translateY(-8px);
+    transition: opacity .3s, transform .3s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: none; }
 </style>
 </head>
 <body class="sleep" data-state="sleeping">
@@ -651,6 +657,17 @@ body.snap, body.snap * { transition: none !important; }
     noteTimer = setTimeout(() => { $("note").textContent = ""; }, 8000);
   }
 
+  /* ================= TOAST (reminder notification) ================= */
+  let toastTimer = null;
+  function notify(text) {
+    let t = $("toast");
+    if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+    t.textContent = String(text || "");
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 9000);
+  }
+
   /* ================= MESSAGES: bada caption + conversation list ================= */
   const msgs = $("msgs"), caption = $("caption");
   let typeTimer = null;
@@ -765,7 +782,7 @@ body.snap, body.snap * { transition: none !important; }
   });
 
   /* ================= Python bridge ================= */
-  window.jarvis = { wake, sleep, setState, addMessage, log, setLevel, setStats, setWeather, action, setVisible };
+  window.jarvis = { wake, sleep, setState, addMessage, log, notify, setLevel, setStats, setWeather, action, setVisible };
 
   addEventListener("resize", sizeCanvas);
   sizeCanvas();

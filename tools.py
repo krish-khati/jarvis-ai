@@ -912,6 +912,112 @@ def note_delete(number: int) -> str:
 
 
 # ============================================
+# 9d. REMINDERS / TASKS (scheduler.py) - "10 minute baad yaad dilana ki paani peena hai"
+#   Save se pehle read-back + "Sahi hai?" (haan pe hi save). Time samajh na aaye to poochta hai.
+#   Reminder ka text private (terminal mein nahi). Confirm-level kaam (WhatsApp, call) reminder
+#   ke saath ho to bhi us waqt main.py Krish se poochta hai - khud kabhi nahi.
+# ============================================
+REMIND_WORDS = {"yaad", "remind", "reminder", "dilana", "dilao", "dila", "baad", "baje", "kal", "parso",
+                "roz", "har", "subah", "shaam", "raat", "schedule", "am", "pm"}
+TASK_LIST_WORDS = {"task", "tasks", "reminder", "reminders", "dikhao", "batao", "padho", "list", "sunao"}
+TASK_DELETE_WORDS = {"task", "tasks", "reminder", "reminders", "hata", "hatao", "mita", "delete",
+                     "cancel", "clear"}
+SNOOZE_WORDS = {"snooze", "phir", "baad"}
+_YES = {"haan", "han", "ha", "haa", "yes", "yeah", "sahi", "theek", "ok", "okay", "ji", "bilkul", "pakka",
+        "kar", "karo", "do", "sure", "correct", "right"}
+_NO = {"nahi", "nahin", "no", "mat", "galat", "cancel", "nope", "wrong"}
+
+
+def _said_yes(answer):
+    """ask_user ka jawab haan hai? (jawab na mile = nahi)"""
+    words = set(re.findall(r"[^\s.,!?।]+", str(answer or "").lower()))
+    return bool(words & _YES) and not words & _NO
+
+
+@tool("Setting reminder...", needs=REMIND_WORDS)
+def reminder_add(request: str) -> str:
+    """Create a reminder or scheduled task from Krish's sentence, e.g. '10 minute baad yaad dilana ki
+    paani peena hai', 'kal subah 7 baje weather batana', 'har roz raat 10 baje sone ki yaad dilana'.
+    request = his full sentence as spoken. It asks him to confirm before saving and asks again if
+    the time is unclear - never guess a time."""
+    global private_reply
+    import scheduler
+    status = scheduler.parse_request(request)
+    if status[0] == "ask":                                # Time/kaam adhoora - poochho, andaza nahi
+        answer = ask_user(status[1])
+        if not answer:
+            raise DirectReply("Theek hai sir, reminder nahi banaya.", ok=False)
+        status = scheduler.parse_request(f"{request} {answer}")
+    if status[0] != "ok":
+        raise DirectReply("Sir, time samajh nahi aaya. '10 minute baad' ya 'kal subah 7 baje' jaise "
+                          "bolke dobara batayein.", ok=False)
+    task = status[1]
+    private_reply = True       # Reminder ka text terminal mein nahi dikhega (sawaal mein bhi text hai)
+    answer = ask_user(f"{task['label'].capitalize()}: {task['what']}. Sahi hai?")
+    if not _said_yes(answer):
+        private_reply = False
+        raise DirectReply("Theek hai sir, reminder nahi banaya.", ok=False)
+    scheduler.add(task["when"], task["what"], task["repeat"], task["kind"])
+    raise DirectReply(f"Reminder set: {task['label']}, {task['what']}.")
+
+
+@tool("Reading tasks...", needs=TASK_LIST_WORDS)
+def task_list() -> str:
+    """Read out Krish's saved reminders/tasks with their numbers ('meri tasks dikhao')."""
+    global private_reply
+    import scheduler
+    tasks = scheduler.all_tasks()
+    if not tasks:
+        raise DirectReply("Sir, abhi koi task ya reminder save nahi hai.")
+    private_reply = True
+    parts = [f"Task {i}: {scheduler.describe(t)}" for i, t in enumerate(tasks[:8], 1)]
+    raise DirectReply(f"Sir, {len(tasks)} tasks hain. " + ". ".join(parts) + ".")
+
+
+@tool("Deleting task {number}...", needs=TASK_DELETE_WORDS)
+def task_delete(number: int) -> str:
+    """Delete one reminder/task by its number (as read out by task_list). Asks Krish to confirm first."""
+    import scheduler
+    try:
+        n = int(number)
+    except (TypeError, ValueError):
+        return "Could not delete task: the number must be a number."
+    if not 1 <= n <= len(scheduler.all_tasks()):
+        return f"Could not delete task: there is no task number {n}."
+    if not confirm(f"Sir, task {n} hata doon?"):
+        raise DirectReply("Theek hai sir, task nahi hataya.")
+    scheduler.remove_number(n)
+    raise DirectReply(f"Task {n} hata diya, sir.")
+
+
+@tool("Clearing all reminders...", needs=TASK_DELETE_WORDS)
+def tasks_clear() -> str:
+    """Delete ALL reminders/tasks ('sab reminders hata do'). Asks Krish to confirm first."""
+    import scheduler
+    count = len(scheduler.all_tasks())
+    if not count:
+        raise DirectReply("Sir, koi task hai hi nahi.")
+    if not confirm(f"Sir, saare {count} reminders hata doon?"):
+        raise DirectReply("Theek hai sir, kuch nahi hataya.")
+    scheduler.clear()
+    raise DirectReply("Saare reminders hata diye, sir.")
+
+
+@tool("Snoozing reminder...", needs=SNOOZE_WORDS)
+def reminder_snooze(minutes: int = 10) -> str:
+    """Snooze the reminder that just went off: remind Krish again after `minutes` (default 10).
+    Use for 'snooze 10 minute'."""
+    import scheduler
+    try:
+        mins = max(1, min(720, int(minutes)))
+    except (TypeError, ValueError):
+        mins = 10
+    if not scheduler.snooze(mins):
+        raise DirectReply("Sir, abhi koi reminder baja nahi jo snooze karun.", ok=False)
+    raise DirectReply(f"Theek hai sir, {mins} minute baad phir yaad dilaunga.")
+
+
+# ============================================
 # 10. PC LOCK
 # ============================================
 @tool("Locking PC...", needs=LOCK_WORDS)
@@ -1261,6 +1367,7 @@ ALL_TOOLS = [
     get_time_date, system_info, take_screenshot, set_volume, set_mute, volume_change,
     media_control, brightness, find_files, open_file,
     note_add, notes_list, note_delete,
+    reminder_add, task_list, task_delete, tasks_clear, reminder_snooze,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen,
     send_whatsapp, whatsapp_call, end_call, read_messages,

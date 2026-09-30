@@ -46,7 +46,7 @@ def _js(func, *args):
             # Page suspend hai - evaluate_js atak jaata. Zaroori cheezein yaad rakho, dikhne pe chalengi
             if func in ("sleep", "setState"):
                 _pending_state = (func, args)
-            elif func in ("addMessage", "action", "log", "setWeather") and len(_pending) < _MAX_PENDING:
+            elif func in ("addMessage", "action", "log", "setWeather", "notify") and len(_pending) < _MAX_PENDING:
                 _pending.append((func, args))
             return
         try:
@@ -168,6 +168,20 @@ def hide_window():
         if not _visible:          # Is beech kisi ne window wapas dikha di ho to suspend mat karo
             _memory_level(True)
             _suspend()
+
+
+tray_notify = None      # main.py set karta hai: tray icon ka chhota notification (title, message)
+
+
+def notify(text):
+    """Chhota notification: HUD mein toast (chhupi window mein queue hoke dikhne pe) + tray balloon.
+    Window fullscreen nahi hoti, JARVIS jagta nahi."""
+    _js("notify", text)
+    if tray_notify:
+        try:
+            tray_notify("JARVIS", text)
+        except Exception:
+            pass
 
 
 def add_message(role, text):

@@ -25,6 +25,7 @@ if sys.stderr is None:
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import brain    # Gemini (dimaag)
+import scheduler      # Reminders / tasks (tasks.json + background thread)
 import notifications  # WhatsApp ke aaye messages (Windows notifications, sirf RAM mein)
 import tools    # Tools (confirm function yahan set karte hain)
 import ui       # Screen pe status
@@ -152,6 +153,51 @@ def announce_messages(on_wake=False):
     voice.speak(f"Sir, {m['sender']} ka message aaya: '{m['text']}'. Reply karun?", private=True)
 
 
+def announce_missed():
+    """Jagne pe: band/sleep-PC ke dauran chhoote reminders ("Sir, 2 reminders miss ho gaye the")."""
+    items = scheduler.pop_missed()
+    if not items:
+        return
+    ui.set_state("speaking")
+    texts = "; ".join(t["what"] for t in items[:3])
+    voice.speak(f"Sir, {len(items)} reminder{'s' if len(items) > 1 else ''} miss ho gaye the: {texts}.",
+                private=True)        # Reminder ka text terminal mein nahi
+
+
+_RISKY_REMINDER = re.compile(r"whatsapp|message|msg|call|bhej|send|shutdown|restart|lock|band|close|delete|hata",
+                             re.IGNORECASE)
+
+
+def announce_reminders():
+    """Jaagte hue jo reminder ka time aa gaya use seedha bolo. Kaam wala reminder ("weather batana")
+    ho to chalao - par WhatsApp/call/shutdown jaisa kaam ho to pehle Krish se poochke (khud kabhi nahi)."""
+    for t in scheduler.pop_due():
+        ui.set_state("speaking")
+        voice.speak(f"Sir, reminder: {t['what']}.", private=True)     # Text terminal mein nahi
+        if t.get("kind") != "act":
+            continue
+        if _RISKY_REMINDER.search(t["what"]):
+            answer = voice_ask(f"Sir, reminder ke hisaab se: {t['what']}. Chalaun?")
+            if not (answer and set(re.findall(r"[^\s.,!?।]+", answer.lower())) & YES_WORDS):
+                voice.speak("Theek hai sir, nahi chalaya.", cache=True)
+                continue
+        try:
+            reply = brain.ask(t["what"])
+        except Exception as e:
+            reply = None
+            ui.log(f"Reminder ka kaam nahi chala: {e}")
+        if reply:
+            private, tools.private_reply = tools.private_reply, False
+            voice.speak(short_for_speech(reply), private=private)
+
+
+def notify_sleeping(task):
+    """Sleep mein reminder: halka chime + chhota notification (HUD toast + tray). JARVIS jagta nahi,
+    window fullscreen nahi hoti."""
+    voice.chime()
+    ui.notify("Reminder: " + task["what"])
+
+
 def voice_confirm(question):
     """Khatarnak kaam se pehle bol ke poochho, jawab suno. True = haan."""
     global confirm_wait_seconds
@@ -197,12 +243,14 @@ def active_mode():
     ui.set_state("speaking")
     voice.speak(WAKE_LINE, cache=True)
     announce_messages(on_wake=True)   # Sleep mein aaye messages: "Sir, 3 naye messages hain"
+    announce_missed()                 # Chhoote reminders: "Sir, 2 reminders miss ho gaye the"
 
     last_heard = time.time()     # Aakhri baar kab kuch samajh aaya (auto-sleep ke liye)
     pending = None               # Spelling sunte waqt aaya alag command (agli baar chalega)
 
     while True:
         announce_messages()      # Jaagte hue naya message aaya ho to batao (reply nahi)
+        announce_reminders()     # Reminder ka time aaya ho to bolo
         ui.set_state("listening")
         # Utna hi intezaar karo jitna auto-sleep tak bacha hai (max 8s ek baar mein)
         remaining = IDLE_SLEEP_SECONDS - (time.time() - last_heard)
@@ -301,6 +349,8 @@ def voice_loop():
     # Tools ko batao ki confirmation / sawaal bol ke poochne hain
     tools.confirm = voice_confirm
     tools.ask_user = voice_ask
+    scheduler.hooks["sleep"] = notify_sleeping
+    scheduler.start()             # Ek background thread, har 20s mein tasks.json dekhta hai
     if notifications.status() == "not started":
         notifications.start()     # WhatsApp notifications padhna (sirf RAM mein)
 
@@ -318,7 +368,12 @@ def voice_loop():
         ui.wake()         # Window saamne + flash + panels slide-in
 
         # --- Active mode ---
-        if active_mode() == "shutdown":
+        scheduler.awake = True        # Reminder ab seedha bola jaayega
+        try:
+            result = active_mode()
+        finally:
+            scheduler.awake = False   # Sleep mein reminder = chime + notification
+        if result == "shutdown":
             break
 
     ui.set_state("speaking")
@@ -452,7 +507,8 @@ def start_with_ui():
                                       fullscreen=True, frameless=True, hidden=True,
                                       background_color="#020a14")
     ui.window.events.closed += exit_now        # Window sach mein band (Alt+F4) -> JARVIS band
-    start_tray()
+    icon = start_tray()
+    ui.tray_notify = lambda title, msg: icon.notify(msg, title)     # Sleep mein chhota notification
     print("JARVIS background mein chal raha hai (tray icon: Show Jarvis / Quit)")
 
     def background():
