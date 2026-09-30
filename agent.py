@@ -36,7 +36,9 @@ cancel_event = threading.Event()
 running = False
 # hooks (main.py lagata hai): watch(True/False) = voice se "stop" sunna; cancelled() = koi bahari cancel signal;
 # llm(prompt) = AI call (tests mein fake; default brain.generate_text)
-hooks = {"watch": None, "cancelled": None, "llm": None}
+hooks = {"watch": None, "cancelled": None, "llm": None, "say": None}
+OPENER = "Theek hai sir, dekhta hoon."      # Goal shuru hote hi ek chhoti line (plan bolte nahi, HUD pe dikhta hai)
+last_stats = {"seconds": 0.0, "steps": 0}    # [Latency] line ke liye: agent ka total time aur tool calls
 CANCEL_WORDS = {"cancel", "stop", "ruko", "rukiye", "abort", "roko"}
 CANCEL_PHRASES = ("ruk jao", "ruk ja", "ruk jaao", "band karo", "chhod do", "rehne do", "bas karo", "bas kar do")
 
@@ -253,8 +255,15 @@ def _watch(watch, on):
 def _run(goal, watch):
     started = time.time()
     wait0 = tools.waiting_seconds()
+    last_stats.update(seconds=0.0, steps=0)
     guard = permissions.Guard()
     catalog = _catalog(goal)
+    say = hooks.get("say")
+    if say:                                  # Watcher se PEHLE bolo, warna apni hi awaaz "stop" ban jaaye
+        try:
+            say(OPENER)
+        except Exception:
+            pass
     _watch(watch, True)
 
     def elapsed():
@@ -286,6 +295,7 @@ def _run(goal, watch):
             ui.plan_step(i, status)
 
     def finish(text):
+        last_stats.update(seconds=time.time() - started - (tools.waiting_seconds() - wait0), steps=tool_calls)
         set_card(idx, "failed" if _cancelled() else "done")        # Chalta hua step ka card band
         ui.plan_end()                                              # STOP button chhupao
         return _final(text, guard, notes)

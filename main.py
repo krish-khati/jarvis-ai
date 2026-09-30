@@ -475,10 +475,15 @@ def active_mode():
         private, tools.private_reply = tools.private_reply, False
         # Barge-in / Esc se beech mein rok diya gaya to baki latency ka hisaab
         # bekaar hai - seedha wapas sunne (listening) par chale jao
-        if not voice.speak(short_for_speech(reply) if not private else reply, private=private):
+        is_agent = brain.last_brain == "agent"
+        # Agent ka summary 2-3 sentence (~240 chars) - lamba bolne mein ElevenLabs credits jaate hain
+        spoken = short_for_speech(reply, 240) if is_agent else short_for_speech(reply)
+        if not voice.speak(spoken if not private else reply, private=private):
             ui.log("Jawab beech me ruk diya gaya - wapas sun raha hoon")
             continue
 
+        if is_agent:
+            last_heard = time.time()       # Agent chalte waqt auto-sleep ginti band thi; ab se 20 s ginti shuru
         # --- Latency: sunne ke baad awaaz shuru hone tak kitna time laga ---
         total = command_stt + brain_seconds + voice.last_tts_seconds
         extra = (f"  (+ confirmation ka intezaar {confirm_wait_seconds:.1f}s alag)"
@@ -487,6 +492,8 @@ def active_mode():
         if verify_s:
             print(f"  [Latency] awaaz check (VAD + denoise + speaker) {verify_s * 1000:.0f} ms, score "
                   f"{voice.last_verify_score:.2f}" + ("  <-- 300 ms se zyada" if verify_s > 0.3 else ""))
+        if is_agent:
+            print(f"  [Latency] agent: {agent.last_stats['seconds']:.1f}s, {agent.last_stats['steps']} tool steps")
         print(f"  [Latency] {(voice.stt.last_engine or 'STT').capitalize()} sunna {command_stt:.1f}s + "
               f"brain ({brain.last_brain}) {brain_seconds:.1f}s + "
               f"awaaz banana {voice.last_tts_seconds:.1f}s = {total:.1f}s{extra}")
@@ -501,6 +508,7 @@ def voice_loop():
     # Agent chalte waqt "stop / cancel" sunna (barge-in jaisa mic listener; confirm ke waqt band)
     watcher = voice.BargeIn(words=[w.strip() for w in os.getenv("AGENT_CANCEL_WORDS", "stop, cancel, wait, enough").split(",")
                                    if w.strip()])
+    agent.hooks["say"] = lambda line: (ui.set_state("speaking"), voice.speak(line, cache=True))    # Har baar same line = ElevenLabs cache
     agent.hooks["watch"] = lambda on: (watcher.clear(), voice.barge_in.clear(), watcher.start()) if on else watcher.stop()
     agent.hooks["cancelled"] = lambda: watcher.triggers.is_set() or voice.barge_in.triggers.is_set()
     scheduler.hooks["sleep"] = notify_sleeping
@@ -557,6 +565,7 @@ class Api:
             # Type karke poocha hai to "Sir, pakka?" bhi screen pe poocho, bol ke nahi
             old_confirm, tools.confirm = tools.confirm, tools.timed_wait(ui_confirm)
             old_ask, tools.ask_user = tools.ask_user, tools.timed_wait(ui_prompt)
+            old_say, agent.hooks["say"] = agent.hooks.get("say"), None      # Typed goal pe "dekhta hoon" bolke nahi
             try:
                 reply = brain.ask(text) or ""
             except Exception as e:
@@ -564,6 +573,7 @@ class Api:
                 reply = "Sorry sir, abhi kuch gadbad ho gayi."
             finally:
                 tools.confirm, tools.ask_user = old_confirm, old_ask
+                agent.hooks["say"] = old_say
         private, tools.private_reply = tools.private_reply, False
         print("JARVIS (typed reply): [private]" if private else f"JARVIS (typed reply): {reply}")
         ui.log(f"Brain: {brain.last_brain}")
