@@ -368,6 +368,8 @@ def _run(goal, watch):
             _watch(watch, False)
         try:
             done_call, res = _interruptible(lambda: guard.run(name, **args), 10_000 if interactive else 20)
+        except Exception as e:                              # Galat args / tool ka crash agent ko nahi girata
+            done_call, res = True, ("error", f"Error while running {name}: {e}")
         finally:
             if interactive:
                 _watch(watch, True)

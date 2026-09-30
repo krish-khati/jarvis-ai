@@ -125,7 +125,7 @@ class Guard:
             return "block", level, "aaye message padhne ke baad koi action nahi"
         return ("ask" if (level == CONFIRM and name not in SELF_CONFIRMING) else "run"), level, ""
 
-    def run(self, name, **args):
+    def run(self, name, /, **args):       # '/' : tool ke args mein 'name' key ho (open_app(name=...)) to bhi na takraye
         decision, level, reason = self.check(name)
         if decision == "block":
             log(name, level, "deny", reason)
