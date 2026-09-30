@@ -386,7 +386,7 @@ def _tool_schema(func):
                 "type": "object",
                 "properties": {n: {"type": _JSON_TYPES.get(p.annotation, "string")}
                                for n, p in params.items()},
-                "required": list(params),
+                "required": [n for n, p in params.items() if p.default is inspect.Parameter.empty],
             },
         },
     }

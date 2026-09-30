@@ -192,6 +192,14 @@ def add_message(role, text):
     _js("addMessage", role, text)
 
 
+def add_image(png_bytes):
+    """HUD mein PNG dikhao (phone screenshot). Chhupi/suspended window mein nahi bhejta (bada data, queue nahi)."""
+    if not _visible or _suspended:
+        return
+    import base64
+    _js("addImage", "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii"))
+
+
 def set_stats(cpu, ram, battery, disk=None, net_mbps=None):
     """CPU %, RAM %, battery % (desktop pe None), disk %, network MB/s.
     Window chhupi ho to bhejna band (bas yaad rakho, dikhne pe ek baar bhejte hain)."""

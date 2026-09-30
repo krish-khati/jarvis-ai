@@ -21,7 +21,7 @@ import tools
 
 SAFE, CONFIRM, NEVER = "SAFE", "CONFIRM", "NEVER"
 
-# Har tool ka risk level (tools.ALL_TOOLS ke 44 tools)
+# Har tool ka risk level (tools.ALL_TOOLS ke 52 tools)
 RISK = {
     # --- SAFE ---
     "web_search": SAFE, "get_weather": SAFE, "get_time_date": SAFE, "system_info": SAFE,
@@ -35,12 +35,15 @@ RISK = {
     "look_at_screen": SAFE, "read_screen": SAFE, "read_webpage": SAFE,
     "git_status": SAFE, "git_log": SAFE,                       # sirf read-only git
     "end_call": SAFE, "read_messages": SAFE,                   # padhna/sirf call kaatna
+    "phone_status": SAFE, "phone_screenshot": SAFE,            # Android phone: sirf dekhna
     # --- CONFIRM (haan ke baad hi) ---
     "send_whatsapp": CONFIRM, "whatsapp_call": CONFIRM,
     "save_memory": CONFIRM, "delete_memory": CONFIRM,
     "close_app": CONFIRM,
     "note_delete": CONFIRM, "reminder_add": CONFIRM, "task_delete": CONFIRM, "tasks_clear": CONFIRM,
     "copy_last_content": CONFIRM, "read_clipboard": CONFIRM, "explain_clipboard": CONFIRM,
+    "phone_open_app": CONFIRM, "phone_type": CONFIRM, "phone_tap": CONFIRM,     # Android phone: har baar haan
+    "phone_back": CONFIRM, "phone_home": CONFIRM, "phone_media": CONFIRM,
     # --- NEVER (agent ke liye band; Krish seedha bole to tool apne confirm ke saath chalta hai) ---
     "shutdown_pc": NEVER, "restart_pc": NEVER, "lock_pc": NEVER,
 }
@@ -50,14 +53,15 @@ UNTRUSTED_SOURCES = {
     "web_search": "web search", "read_webpage": "web page", "look_at_screen": "screen",
     "read_screen": "screen", "read_messages": "WhatsApp messages", "read_clipboard": "clipboard",
     "explain_clipboard": "clipboard", "find_files": "file names", "git_log": "git commit titles",
-    "git_status": "git file names", "notes_list": "notes",
+    "git_status": "git file names", "notes_list": "notes", "phone_screenshot": "phone screen",
 }
 # Inke result (message / web page / screen) ke baad us goal mein koi CONFIRM/NEVER kaam nahi: sirf padhke sunana
-INCOMING_MESSAGE_TOOLS = {"read_messages", "read_webpage", "read_screen"}
+INCOMING_MESSAGE_TOOLS = {"read_messages", "read_webpage", "read_screen", "phone_screenshot"}
 # CONFIRM tools jo APNA confirm khud poochte hain (chat header/message dikhake). Inpe layer dobara nahi poochti:
 # ek kaam = ek hi confirm. Baaki CONFIRM tool (delete_memory: sirf "all" pe apna confirm) pe layer poochti hai.
 SELF_CONFIRMING = {"send_whatsapp", "whatsapp_call", "save_memory", "close_app", "note_delete", "reminder_add",
-                   "task_delete", "tasks_clear", "copy_last_content", "read_clipboard", "explain_clipboard"}
+                   "task_delete", "tasks_clear", "copy_last_content", "read_clipboard", "explain_clipboard",
+                   "phone_open_app", "phone_type", "phone_tap", "phone_back", "phone_home", "phone_media"}
 
 NEVER_LINE = "Ye main khud nahi karunga, sir. Aap seedha bolo."
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "agent.log")

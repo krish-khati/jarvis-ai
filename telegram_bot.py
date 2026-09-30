@@ -199,6 +199,7 @@ class Bot:
     def _run_brain(self, text):
         replies = []
         with self.brain_lock:
+            tools.phone_last_image = None      # phone screenshot is sawaal mein bana to hi Telegram pe bhejne ka sawaal
             old = (tools.confirm, tools.ask_user, tools.read_out, tools.source)
             tools.confirm = tools.timed_wait(self.hook_confirm)
             tools.ask_user = tools.timed_wait(self.hook_ask_user)
@@ -212,6 +213,7 @@ class Bot:
             finally:
                 tools.confirm, tools.ask_user, tools.read_out, tools.source = old
                 tools.private_reply = False
+                self._phone_png, tools.phone_last_image = tools.phone_last_image, None
         return "\n\n".join(p for p in [*replies, reply] if p)
 
     async def _process_text(self, update, text):
@@ -227,8 +229,16 @@ class Bot:
                 print(f"[Telegram] screenshot error: {type(e).__name__}")
                 await self._reply(update, "Screenshot nahi ho paya, sir.")
             return
+        self._phone_png = None
         reply = await self.loop.run_in_executor(None, self._run_brain, text)
         await self._reply(update, reply or "Theek hai sir.")
+        png, self._phone_png = self._phone_png, None
+        if png:      # Phone ki screen private hai: Telegram pe bhi Haan ke baad hi
+            if await self._ask_buttons("Sir, phone ka screenshot yahan bhejun?") == "haan":
+                try:
+                    await update.message.reply_photo(io.BytesIO(png))
+                except Exception as e:
+                    print(f"[Telegram] phone screenshot error: {type(e).__name__}")
 
     # ---------- telegram handlers ----------
     def _authorized(self, update):

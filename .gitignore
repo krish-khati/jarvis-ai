@@ -38,3 +38,6 @@ voice_profile.npy
 
 # Morning briefing ki aakhri tareekh
 briefing_state.json
+
+# Google ka official ADB (platform-tools) - bada hai, alag se download hota hai
+tools/platform-tools/

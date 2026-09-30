@@ -732,6 +732,17 @@ body.snap, body.snap * { transition: none !important; }
 
   /* ================= MESSAGES: bada caption + conversation list ================= */
   const msgs = $("msgs"), caption = $("caption");
+  // Phone ki screen ka screenshot conversation list mein (sirf RAM/DOM, disk pe nahi)
+  function addImage(dataUrl) {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png;base64,")) return;
+    const el = document.createElement("div"); el.className = "msg ai";
+    const b = document.createElement("b"); b.textContent = "PHONE";
+    const im = document.createElement("img");
+    im.src = dataUrl; im.alt = "phone screen"; im.style.cssText = "max-width:100%;max-height:340px;border:1px solid var(--blue);border-radius:6px;display:block";
+    el.append(b, im); msgs.appendChild(el);
+    while (msgs.children.length > 80) msgs.firstElementChild.remove();
+    msgs.scrollTop = msgs.scrollHeight;
+  }
   let typeTimer = null;
   function addMessage(who, text) {
     who = who === "user" ? "user" : "ai";
@@ -856,7 +867,7 @@ body.snap, body.snap * { transition: none !important; }
   });
 
   /* ================= Python bridge ================= */
-  window.jarvis = { wake, sleep, setState, addMessage, log, notify, setLevel, setStats, setWeather, action, setVisible, plan, planStep, planEnd, showAsk };
+  window.jarvis = { wake, sleep, setState, addMessage, addImage, log, notify, setLevel, setStats, setWeather, action, setVisible, plan, planStep, planEnd, showAsk };
 
   addEventListener("resize", sizeCanvas);
   sizeCanvas();
