@@ -172,29 +172,47 @@ def score_of(samples):
     return float(np.dot(embed(clean), profile())), secs, clean
 
 
-# ---------- Commands (fullmatch: "awaaz ka matlab kya hai" jaise sawaal AI ke paas jaate hain) ----------
+# ---------- Commands: token se pehchano (STT ke galat roop bhi), sirf chhote command (sawaal/lambi baat nahi) ----------
 import re  # noqa: E402
 
-_A = r"(?:meri |mera |apni )?(?:awaaz|awaz|aawaz|voice)"
-ENROLL_CMD = re.compile(rf"(?:{_A}(?: ko)? (?:dobara |phir se |fir se )?(?:yaad kar(?:o| lo| do| le| lena)|record kar(?:o| lo| do)|enroll kar(?:o| do))"
-                        r"|(?:remember|enroll|record) my voice|learn my voice)")
-FORGET_CMD = re.compile(rf"{_A} (?:ko )?(?:bhool jao|bhul jao|bhool ja|bhul ja|delete kar(?:o| do)|hata do|hatao|mita do|mitao)"
-                        r"|forget my voice|delete my voice")
+VOICE_TOK = {"awaaz", "awaz", "aawaz", "avaaz", "avaz", "awaj", "aavaz", "awaazein", "voice", "vois", "voise",
+             "आवाज़", "आवाज", "आवाज़"}
+ENROLL_TOK = {"yaad", "yad", "yaadh", "yaat", "yaadd", "record", "rekord", "enroll", "enrol", "register",
+              "pehchano", "pehchan", "pahchano", "pahchan", "pehchaano", "pehchaan", "remember", "learn", "याद", "पहचानो"}
+FORGET_TOK = {"bhool", "bhul", "bhoolo", "bhulo", "bhulja", "bhooljao", "hata", "hatao", "hatado", "mita", "mitao", "mitado",
+              "delete", "forget", "remove", "भूल", "हटाओ", "मिटाओ"}
+# Bolne ke bhare-bharaye/STT-bigde shabd (jo command ko sawaal ya lambi baat nahi banate)
+FILLER_TOK = {"jarvis", "jervis", "hey", "hi", "please", "plz", "zara", "meri", "meeri", "meree", "mari", "mera", "apni", "apna",
+              "my", "the", "ki", "ka", "ko", "ab", "abhi", "dobara", "phir", "fir", "se", "ek", "baar", "na", "to", "new", "again",
+              "kar", "karo", "kero", "kro", "karu", "karna", "kare", "karein", "kijiye", "kijiy", "do", "de", "lo", "le", "lena",
+              "dena", "rakho", "rakhna", "rakh", "jao", "ja", "jaao", "now", "and"}
+_QUESTION = {"kya", "kaise", "kaisa", "kyu", "kyun", "kaun", "kab", "matlab", "meaning", "what", "how", "why", "kitna", "kitni"}
 
 
-def _norm(text):
-    t = re.sub(r"[?.,!।:;]", " ", (text or "").lower())
-    t = re.sub(r"^\s*(hey\s+)?(jarvis|jervis|jarvi|javis|travis|service)\s+", "", t)
-    t = re.sub(r"\b(please|plz|zara)\b", " ", t)
-    return " ".join(t.split())
+def _tokens(text):
+    t = (text or "").lower()
+    return [w for w in re.findall(r"[^\W_]+", t) if w]
 
 
-def is_enroll_command(text):
-    return bool(ENROLL_CMD.fullmatch(_norm(text)))
+def _voice_cmd(text, verbs):
+    """Voice word + koi verb, baaki sirf filler. Sawaal ("kya", "kaise"...) ya lambi baat = False."""
+    toks = _tokens(text)
+    if not toks or len(toks) > 9 or set(toks) & _QUESTION:
+        return False
+    s = set(toks)
+    if not (s & VOICE_TOK) or not (s & verbs):
+        return False
+    return not (s - VOICE_TOK - verbs - FILLER_TOK)
 
 
 def is_forget_command(text):
-    return bool(FORGET_CMD.fullmatch(_norm(text)))
+    """"meri awaaz bhool jao" / "forget my voice" (STT ke galat roop bhi)."""
+    return _voice_cmd(text, FORGET_TOK)
+
+
+def is_enroll_command(text):
+    """"meri awaaz yaad karo" / "meeri awaz yad kero" / "voice enroll" / "meri awaaz pehchano" ..."""
+    return not is_forget_command(text) and _voice_cmd(text, ENROLL_TOK)
 
 
 # ---------- Verify (voice.py yahin se bulata hai) ----------
@@ -254,6 +272,36 @@ def build_profile(clips):
     sims = [float(np.dot(e, mean)) for e in embs]
     np.save(PROFILE_FILE, mean.astype(np.float32))
     return True, f"{len(embs)} vaakya se profile bani", min(sims)
+
+
+def run_enrollment(record, prompt=None, retries=2):
+    """10 vaakya: record() -> AudioData ya None (mic se ek vaakya), prompt(i, n, sentence) vaakya dikhata/bolta hai.
+    Recordings sirf RAM mein; profile tabhi badalti hai jab nayi ban jaaye. Return (ok, message, sabse alag vaakya ki samanta)."""
+    if not _load():
+        return False, "models nahi mile", 0.0
+    clips, misses = [], 0
+    n = len(ENROLL_SENTENCES)
+    for i, sentence in enumerate(ENROLL_SENTENCES, 1):
+        for _ in range(retries):
+            if prompt:
+                prompt(i, n, sentence)
+            audio = record()
+            if audio is not None:
+                samples = to_float(audio.frame_data)
+                if speech_only(samples)[1] >= 0.8:
+                    clips.append(samples)
+                    misses = 0
+                    break
+            misses += 1
+            if misses >= 3:
+                break
+        if misses >= 3:
+            break
+    if misses >= 3:
+        return False, "awaaz nahi suni", 0.0
+    result = build_profile(clips)
+    del clips                                   # Recordings ka koi nishaan nahi
+    return result
 
 
 if __name__ == "__main__":

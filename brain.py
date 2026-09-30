@@ -54,6 +54,14 @@ gemini_client = (genai.Client(api_key=GEMINI_KEY, http_options=types.HttpOptions
 
 # Groq (backup brain) - model .env ke GROQ_MODEL se aata hai, code chhedne ki zarurat nahi
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+# Fallback list (pehla = pasandida; live list se check: openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b).
+# 429/error pe agla model; har model ka alag cooldown (Groq ki TPM limit har model ki alag hai).
+GROQ_MODELS = [m.strip() for m in os.getenv("GROQ_MODELS", GROQ_MODEL).split(",") if m.strip()] or [GROQ_MODEL]
+GROQ_MAX_TRIES = 2                       # Ek call mein zyada se zyada itne models (time bachane ke liye)
+GROQ_REST = {429: 60, 404: 3600, 400: 600}     # Error code -> us model ko kitne second chhodo
+GROQ_REST_DEFAULT = 120
+_groq_down_until = {}
+last_groq_model = GROQ_MODELS[0]
 groq_client = Groq(api_key=GROQ_KEY, timeout=GROQ_CALL_TIMEOUT, max_retries=0) if GROQ_KEY else None
 # gpt-oss models kitna "soch" ke jawab dein: low / medium / high (low = sabse fast)
 GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low")
@@ -216,9 +224,8 @@ def rewrite_message(message, instruction):
         pass
     try:
         if groq_client:
-            r = groq_client.chat.completions.create(
-                model=GROQ_MODEL, messages=[{"role": "user", "content": ask}],
-                reasoning_effort=GROQ_REASONING_EFFORT, include_reasoning=False)
+            r = groq_chat(messages=[{"role": "user", "content": ask}],
+                          reasoning_effort=GROQ_REASONING_EFFORT, include_reasoning=False)
             text = r.choices[0].message.content
             if text:
                 return _tidy(text).strip('"')
@@ -244,9 +251,8 @@ def generate_text(prompt):
         pass
     try:
         if groq_client:
-            r = groq_client.chat.completions.create(
-                model=GROQ_MODEL, messages=[{"role": "user", "content": prompt}],
-                reasoning_effort=GROQ_REASONING_EFFORT, include_reasoning=False)
+            r = groq_chat(messages=[{"role": "user", "content": prompt}],
+                          reasoning_effort=GROQ_REASONING_EFFORT, include_reasoning=False)
             text = r.choices[0].message.content
             if text:
                 return text.strip()
@@ -388,6 +394,61 @@ def _tool_schema(func):
 
 GROQ_TOOLS = [_tool_schema(f) for f in tools.ALL_TOOLS]
 TOOLS_BY_NAME = {f.__name__: f for f in tools.ALL_TOOLS}
+_SCHEMA_BY_NAME = {t["function"]["name"]: t for t in GROQ_TOOLS}
+
+# Groq ko har baar sabhi 43 tools bhejna ~6-7k tokens hai (8k/min limit -> 429). Sirf relevant tools bhejo:
+# chhota always-on set + jinke safety words (`needs=`) current message mein hain. (Lock waise bhi tool ke andar hai.)
+GROQ_ALWAYS_ON = ("web_search", "get_weather", "get_time_date", "system_info")
+
+
+def _approx_tokens(obj):
+    return len(json.dumps(obj, ensure_ascii=False)) // 4         # Mota andaza: ~4 characters = 1 token
+
+
+def groq_tools_for(message=None):
+    """Is message ke liye relevant Groq tool schemas. (tools.current_request se safety words milte hain.)"""
+    if message is not None:
+        tools.current_request = message
+    picked = []
+    for f in tools.ALL_TOOLS:
+        needs = getattr(f, "needs", None)
+        if f.__name__ in GROQ_ALWAYS_ON or (needs and tools._asked_for(needs)):
+            picked.append(_SCHEMA_BY_NAME[f.__name__])
+    return picked
+
+
+def _groq_models_up():
+    """Cooldown mein na wale Groq models (order mein). Sab cooldown mein hon to jo sabse pehle theek hoga wahi."""
+    now = time.time()
+    up = [m for m in GROQ_MODELS if now >= _groq_down_until.get(m, 0)]
+    return up or [min(GROQ_MODELS, key=lambda m: _groq_down_until.get(m, 0))]
+
+
+def _groq_failed(model, e):
+    code = getattr(e, "status_code", None)
+    rest = GROQ_REST.get(code, GROQ_REST_DEFAULT)
+    if code == 429:                                # Header mein retry-after ho to wahi
+        try:
+            rest = max(rest, float(e.response.headers.get("retry-after", 0)) + 1)
+        except (AttributeError, TypeError, ValueError):
+            pass
+    _groq_down_until[model] = time.time() + rest
+    print(f"  (Groq {model} error {code or ''}: {str(e)[:90]} -> {rest:.0f}s aaram)")
+
+
+def groq_chat(**kwargs):
+    """Groq call, models ki fallback list ke saath (har model ka alag cooldown). Response ya aakhri error."""
+    global last_groq_model
+    last = None
+    for model in _groq_models_up()[:GROQ_MAX_TRIES]:
+        try:
+            r = groq_client.chat.completions.create(model=model, **kwargs)
+            last_groq_model = model
+            return r
+        except Exception as e:
+            last = e
+            _groq_failed(model, e)
+    raise last
 
 
 def _ask_groq(message, note=""):
@@ -398,11 +459,12 @@ def _ask_groq(message, note=""):
     messages.append({"role": "user", "content": message + note})
 
     ran = {}                # (tool, args) -> result: Groq wahi tool dobara maange to dobara mat chalao
+    picked = groq_tools_for()       # Sirf relevant tools (tools.current_request = abhi ka message)
+    ui.log(f"Groq tools: {len(GROQ_TOOLS)} -> {len(picked)} (~{_approx_tokens(GROQ_TOOLS)} -> ~{_approx_tokens(picked)} tokens)")
     for _ in range(5):      # Zyada se zyada 5 round (warna infinite loop ka khatra)
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
+        response = groq_chat(
             messages=messages,
-            tools=GROQ_TOOLS,
+            tools=picked,
             tool_choice="auto",      # Tool chahiye ya nahi - Groq khud decide kare
             reasoning_effort=GROQ_REASONING_EFFORT,   # Kam sochna = jaldi jawab
             include_reasoning=False,  # Model ki "andar ki soch" mat bhejo (chhota response)
@@ -589,6 +651,11 @@ def _gemini_all_models(message, out):
             out["reply"] = _tidy(_ask_gemini(message, model))
             out["model"] = model
             break
+        except tools.DirectReply as d:
+            # Tool ne seedha jawab diya (BaseException hai, thread crash kar deti thi) -> main thread ko do
+            out["direct"] = d
+            out["model"] = model
+            break
         except Exception as e:
             code = getattr(e, "code", None)
             print(f"  (Gemini {model} error {code or ''}: {str(e)[:100]})")
@@ -604,15 +671,19 @@ def _gemini_with_deadline(message):
     out = {}
     t = threading.Thread(target=_gemini_all_models, args=(message, out), daemon=True)
     started = time.time()
+    wait0 = tools.waiting_seconds()
     t.start()
     while not out.get("done"):
-        waited = time.time() - started
-        limit = 12 if tools.call_log else GEMINI_BUDGET_SECONDS
+        user_wait = tools.waiting_seconds() - wait0       # Tool Krish se confirm pooch raha ho to wo time gino nahi
+        waited = time.time() - started - user_wait
+        limit = 12 if (tools.call_log or user_wait > 0) else GEMINI_BUDGET_SECONDS
         if waited > limit:
             print(f"  (Gemini {waited:.1f}s mein nahi aaya -> Groq)")
             out["abandoned"] = True
             return None
         time.sleep(0.05)
+    if out.get("direct"):
+        raise out["direct"]          # ask() ise pehle jaise pakadta hai (Groq wale DirectReply jaisa)
     if out.get("reply"):
         ui.log(f"Brain: Gemini ({out['model']})")
         return out["reply"]
@@ -664,6 +735,6 @@ def _answer(message):
         print(f"  (Groq error: {str(e)[:200]})")
         return "Sorry sir, dono brains abhi kaam nahi kar rahe. Thodi der baad try kariye."
     last_brain = "groq"
-    ui.log(f"Brain: Groq ({GROQ_MODEL})")
+    ui.log(f"Brain: Groq ({last_groq_model})")
     _remember(message, reply)
     return reply

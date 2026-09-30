@@ -310,28 +310,15 @@ def enroll_voice():
     ui.set_state("speaking")
     voice.speak("Theek hai sir. Main ek-ek vaakya bolunga, aap use apni normal awaaz mein dohraiye.",
                 edge_voice=voice._pick_voice("theek hai sir"))
-    clips, misses = [], 0
-    for i, sentence in enumerate(speaker.ENROLL_SENTENCES, 1):
-        for attempt in range(2):
-            ui.add_message("ai", f"{i}/{len(speaker.ENROLL_SENTENCES)}: {sentence}")      # HUD pe padh bhi sakein
-            ui.set_state("speaking")
-            voice.speak(sentence, show=False, edge_voice=voice._pick_voice(sentence))   # Free edge-tts (credits nahi)
-            ui.set_state("listening")
-            voice.beep()
-            audio = voice._record_until_silence(wait_seconds=8)        # Na verify, na STT, na disk
-            if audio is not None:
-                samples = speaker.to_float(audio.frame_data)
-                if speaker.speech_only(samples)[1] >= 0.8:
-                    clips.append(samples)
-                    misses = 0
-                    break
-            misses += 1
-            if misses >= 3:
-                break
-        if misses >= 3:
-            break
-    ok, msg, worst = (False, "awaaz nahi suni", 0.0) if misses >= 3 else speaker.build_profile(clips)
-    del clips                                       # Recordings ka koi nishaan nahi
+    def prompt(i, n, sentence):
+        ui.add_message("ai", f"{i}/{n}: {sentence}")                                   # HUD pe padh bhi sakein
+        ui.set_state("speaking")
+        voice.speak(sentence, show=False, edge_voice=voice._pick_voice(sentence))    # Free edge-tts (credits nahi)
+        ui.set_state("listening")
+        voice.beep()
+
+    # Na verify, na STT, na disk: seedha mic
+    ok, msg, worst = speaker.run_enrollment(lambda: voice._record_until_silence(wait_seconds=8), prompt)
     ui.set_state("speaking")
     if not ok:
         ui.action(aid, "Awaaz yaad karna", msg[:60], "failed")
@@ -403,6 +390,7 @@ def active_mode():
         print(f"Krish: {tools.mask_private(command)}")
         ui.add_message("user", command)
         heard_at = time.time()        # Latency yahan se ginna shuru (command sun liya)
+        wait_at_start = tools.waiting_seconds()
         command_stt = voice.last_stt_seconds   # (confirm wala sunna baad mein isse overwrite kar deta)
         confirm_wait_seconds = 0.0
 
@@ -452,7 +440,8 @@ def active_mode():
         if not reply:
             continue
         # Brain ka asli time = kul time - confirmation ka intezaar
-        brain_seconds = time.time() - heard_at - confirm_wait_seconds
+        confirm_wait_seconds = tools.waiting_seconds() - wait_at_start      # Overlap nahi (ek hi baar gina)
+        brain_seconds = max(0.0, time.time() - heard_at - confirm_wait_seconds)
 
         # Poora jawab print karo, bolo sirf chhota version
         if len(reply) > 350:
@@ -474,7 +463,7 @@ def active_mode():
         if verify_s:
             print(f"  [Latency] awaaz check (VAD + denoise + speaker) {verify_s * 1000:.0f} ms, score "
                   f"{voice.last_verify_score:.2f}" + ("  <-- 300 ms se zyada" if verify_s > 0.3 else ""))
-        print(f"  [Latency] Google sunna {command_stt:.1f}s + "
+        print(f"  [Latency] {(voice.stt.last_engine or 'STT').capitalize()} sunna {command_stt:.1f}s + "
               f"brain ({brain.last_brain}) {brain_seconds:.1f}s + "
               f"awaaz banana {voice.last_tts_seconds:.1f}s = {total:.1f}s{extra}")
 
@@ -482,8 +471,8 @@ def active_mode():
 def voice_loop():
     """Awaaz wala loop: sleep mode <-> active mode. (UI ke saath alag thread mein chalta hai)"""
     # Tools ko batao ki confirmation / sawaal bol ke poochne hain
-    tools.confirm = voice_confirm
-    tools.ask_user = voice_ask
+    tools.confirm = tools.timed_wait(voice_confirm)
+    tools.ask_user = tools.timed_wait(voice_ask)
     tools.read_out = voice_read_out
     scheduler.hooks["sleep"] = notify_sleeping
     scheduler.start()             # Ek background thread, har 20s mein tasks.json dekhta hai
@@ -533,8 +522,8 @@ class Api:
         print(f"Krish (typed): {tools.mask_private(text)}")
         with brain_lock:
             # Type karke poocha hai to "Sir, pakka?" bhi screen pe poocho, bol ke nahi
-            old_confirm, tools.confirm = tools.confirm, ui_confirm
-            old_ask, tools.ask_user = tools.ask_user, ui_prompt
+            old_confirm, tools.confirm = tools.confirm, tools.timed_wait(ui_confirm)
+            old_ask, tools.ask_user = tools.ask_user, tools.timed_wait(ui_prompt)
             try:
                 reply = brain.ask(text) or ""
             except Exception as e:

@@ -29,7 +29,7 @@ import logging as _logging
 for _n in ("google_genai", "google_genai.models", "google_genai.types"):
     _logging.getLogger(_n).setLevel(_logging.ERROR)     # AFC warning chup
 
-STT_ORDER = [e.strip() for e in os.getenv("STT_ORDER", "groq,google,gemini").split(",") if e.strip()]
+STT_ORDER = [e.strip() for e in os.getenv("STT_ORDER", "google,groq,gemini").split(",") if e.strip()]
 GEMINI_STT_MODEL = os.getenv("GEMINI_STT_MODEL", "gemini-3.5-transcribe")
 GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 # Roz ki call limit (0 = koi limit nahi). Asli limit se thodi kam rakhi hai; 429 aaye to bhi switch hota hai
@@ -199,7 +199,20 @@ def _groq_engine(audio, wav):
     text = _clean(r if isinstance(r, str) else getattr(r, "text", ""))
     if re.search(r"[ऀ-ॿ]", text):     # Devanagari aaya -> ye engine fail, agla engine sunega
         raise ValueError("Groq ne Devanagari diya")
+    if repeats(text):                 # Whisper ka bhram: "thank you thank you thank you" -> reject, agla engine
+        raise ValueError("Groq (Whisper) ne ek hi shabd baar-baar dohraya")
     return text
+
+
+def repeats(text, times=3):
+    """True agar koi shabd (ya 2-3 shabd ka tukda) lagatar `times` ya zyada baar dohraya gaya ho."""
+    words = re.findall(r"[^\W_]+", (text or "").lower())
+    for n in (1, 2, 3):
+        for i in range(len(words) - n * times + 1):
+            chunk = words[i:i + n]
+            if all(words[i + k * n:i + (k + 1) * n] == chunk for k in range(times)):
+                return True
+    return False
 
 
 _recognizer = sr.Recognizer()

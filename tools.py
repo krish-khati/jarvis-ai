@@ -58,6 +58,39 @@ def confirm(question):
     return False
 
 
+# --- Krish ke jawab ka intezaar (confirm / ask_user) ka hisaab ---
+# Brain ka deadline aur [Latency] line isse intezaar ka time ghatate hain (overlap ho to ek hi baar gino)
+import threading as _threading
+_wait_lock = _threading.Lock()
+_wait_total, _wait_since, _wait_active = 0.0, None, 0
+
+
+def timed_wait(fn):
+    """confirm/ask_user hook ko lapeto: uske andar bitaya time 'user ka intezaar' gina jaata hai."""
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        global _wait_since, _wait_active, _wait_total
+        with _wait_lock:
+            if _wait_active == 0:
+                _wait_since = time.time()
+            _wait_active += 1
+        try:
+            return fn(*a, **k)
+        finally:
+            with _wait_lock:
+                _wait_active -= 1
+                if _wait_active == 0 and _wait_since is not None:
+                    _wait_total += time.time() - _wait_since
+                    _wait_since = None
+    return wrapper
+
+
+def waiting_seconds():
+    """Ab tak Krish ke jawab ke intezaar mein kul kitna time gaya (chal raha intezaar bhi gina)."""
+    with _wait_lock:
+        return _wait_total + ((time.time() - _wait_since) if _wait_since is not None else 0.0)
+
+
 def ask_user(question):
     """Sawaal poochh ke POORA jawab (text) lo - jaise "haan" / "nahi" / "thoda polite bana do".
     main.py (bol ke), jarvis.py (type karke), UI (prompt box) isko badalte hain.
@@ -112,6 +145,8 @@ LOCK_WORDS = {"lock", "लॉक"}
 CLOSE_WORDS = {"close", "band", "bandh", "quit", "exit", "kill", "बंद"}
 OPEN_WORDS = {"open", "kholo", "khol", "kholna", "launch", "start", "chalao", "chalu",
               "खोलो", "ओपन"}
+# "meri awaaz yaad karo" memory save NAHI hai (speaker enrollment): save_memory in words pe BLOCK
+VOICE_WORDS = {"awaaz", "awaz", "aawaz", "avaaz", "awaj", "voice", "आवाज़", "आवाज"}
 # Har tool ke apne alag words (OPEN_WORDS sirf open_app / open_website / open_file / read_webpage kholta hai)
 EDITOR_WORDS = {"capcut", "davinci", "resolve", "premiere", "editor", "video editor"}
 MEMORY_SAVE_WORDS = {"yaad", "yad", "remember", "save", "note", "rakhna", "rakho", "rakh", "memory", "याद"}
@@ -162,7 +197,7 @@ def _asked_for(words):
 _action_ids = itertools.count(1)     # UI ke Activity panel ke liye har kaam ka alag number
 
 
-def tool(message, needs=None):
+def tool(message, needs=None, blocked_by=None):
     def decorator(func):
         @functools.wraps(func)     # Gemini ko asli function ka naam/docstring dikhe
         def wrapper(*args, **kwargs):
@@ -186,6 +221,13 @@ def tool(message, needs=None):
             title, detail = (title or func.__name__)[:40], detail[:60]
 
             # --- Safety lock: kya Krish ne abhi ye kaam maanga hai? ---
+            if blocked_by and _asked_for(blocked_by):
+                ui.log(f"BLOCKED {func.__name__}: message mein {sorted(blocked_by)[:3]}... jaisa word hai")
+                ui.action(aid, title, "Blocked (safety lock)", "failed")
+                result = (f"BLOCKED for safety: this request is not about {func.__name__}. Do NOT call it. "
+                          f"Just answer Krish's current message normally.")
+                call_log.append((func.__name__, result))
+                return result
             if needs and not _asked_for(needs):
                 ui.log(f"BLOCKED {func.__name__}: current message did not ask for it")
                 ui.action(aid, title, "Blocked (safety lock)", "failed")
@@ -214,6 +256,7 @@ def tool(message, needs=None):
             ui.action(aid, title, detail if not failed else str(result)[:60], "failed" if failed else "done")
             call_log.append((func.__name__, result))
             return result
+        wrapper.needs = needs            # brain.py Groq ko sirf relevant tools bhejne ke liye padhta hai
         return wrapper
     return decorator
 
@@ -1343,7 +1386,7 @@ def get_weather(city: str) -> str:
 # ============================================
 # 13. LONG-TERM MEMORY - Krish ki baatein yaad rakhna / bhoolna (memory.py)
 # ============================================
-@tool("Saving to memory: {fact}...", needs=MEMORY_SAVE_WORDS)
+@tool("Saving to memory: {fact}...", needs=MEMORY_SAVE_WORDS, blocked_by=VOICE_WORDS)
 def save_memory(fact: str) -> str:
     """Save an important long-term fact about Krish, e.g. birthday, likes/dislikes,
     friends' or family names, goals. Use when Krish says 'yaad rakhna' / 'remember'

@@ -653,7 +653,10 @@ def _voice_profile_command(command):
         speaker.forget()
         return "Awaaz profile mita di, sir. Ab JARVIS sabki awaaz sunega. Dobara yaad karwane ke liye 'Jarvis meri awaaz yaad karo' boliye."
     if speaker.is_enroll_command(command):
-        return "Awaaz yaad karne ke liye mic chahiye, sir. 'Jarvis meri awaaz yaad karo' bolke ya HUD ka Voice button dabake shuru kariye."
+        # Typed / HUD command: voice loop (jaagte hue) 10 vaakya wali enrollment chalayega. Voice se bola ho to
+        # main.py ise pehle hi pakad leta hai. Kabhi AI / save_memory tak nahi jaata.
+        speaker.enroll_requested.set()
+        return "Theek hai sir, awaaz yaad karna shuru kar raha hoon. Main vaakya bolunga, aap dohraiye."
     return None
 
 
@@ -704,6 +707,11 @@ def handle(command):
     text = _clean(command)
     hi = _hinglish(text)
 
+    # --- Awaaz profile ("meri awaaz yaad karo" / "bhool jao"): sabse pehle, memory/AI/save_memory tak kabhi nahi ---
+    reply = _voice_profile_command(command)
+    if reply:
+        return reply
+
     # --- WhatsApp / calls (tools khud confirm + DRY_RUN + safety lock sambhalte hain) ---
     reply = _whatsapp_command(command, text)
     if reply:
@@ -722,10 +730,6 @@ def handle(command):
             return ("Abhi mere paas aapke baare mein kuch save nahi hai, sir. "
                     "'Yaad rakhna ki...' bolke kuch bata dijiye.")
         return "Sir, mujhe yaad hai: " + " ".join(f if f.endswith(".") else f + "." for f in facts)
-
-    reply = _voice_profile_command(command)       # Awaaz profile: bhool jao / yaad karo
-    if reply:
-        return reply
 
     reply = _read_command(command, text)          # Padh ke sunao (screen / page link / clipboard)
     if reply:
