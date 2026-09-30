@@ -610,6 +610,38 @@ def _content_command(command, text, hi):
     return f"Sorry sir, {result}"        # Sahi chale to DirectReply uthta hai
 
 
+# ============================================
+# Read aloud / translator: "ye page padh ke sunao", "screen padh ke sunao", "clipboard padh do",
+#   "https://... padh ke sunao". Sab fullmatch: "page kya hota hai", "padho" akela AI/dusre shortcut ke paas.
+#   "Translator mode on: Hindi se English" main.py ka voice loop pakadta hai; yahan tak aaye (typed) to mana.
+# ============================================
+_R_VERB = (r"(?:padh ke sunao|padh kar sunao|padh ke suna do|padh ke suna de|padhke sunao|padh do|padh de|"
+           r"padho|padhna|sunao|suna do|read aloud|read out|read out loud|read karo|read kar do)")
+SCREEN_READ = re.compile(rf"(?:is |iss |ye |yeh |ye wala |is wala )?(?:page|screen|window|article|webpage|web page)"
+                         rf"(?: ka text| ka content| ko| par ka text)? {_R_VERB}"
+                         r"|read (?:this|the|my) (?:page|screen|article|window)(?: aloud| out loud| out)?"
+                         r"|read (?:this|the|my) (?:page|screen|article|window)")
+CLIPBOARD_READ = re.compile(rf"(?:is |iss |ye |yeh )?clipboard (?:ka |ke |wala |mein |me |ko )*(?:text |content )*"
+                            rf"(?:ko )?{_R_VERB}|read (?:my |the )?clipboard(?: aloud| out loud| out)?")
+URL_READ = re.compile(rf"\s*(?:jarvis[ ,]+)?(?:(?:read|padho|padh do|sunao)(?: aloud)?[: ]+(?P<u>(?:https?://|www\.)\S+)"
+                      rf"|(?P<u2>(?:https?://|www\.)\S+) (?:ko |ka text )?{_R_VERB})\s*", re.I)
+
+
+def _read_command(command, text):
+    """Padh ke sunao commands (bina AI). Sahi chale to DirectReply uthta hai; yahan tak sirf error pe."""
+    m = URL_READ.fullmatch(command or "")
+    if m:
+        return f"Sorry sir, {tools.read_webpage(m['u'] or m['u2'])}"
+    if SCREEN_READ.fullmatch(text):
+        return f"Sorry sir, {tools.read_screen()}"
+    if CLIPBOARD_READ.fullmatch(text):
+        return f"Sorry sir, {tools.read_clipboard()}"
+    import translator
+    if translator.parse_on(command) or translator.is_off(command):
+        return "Translator mode sirf awaaz se chalta hai, sir. 'Jarvis, translator mode on: Hindi se English' boliye."
+    return None
+
+
 def _media_command(text, hi):
     """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
     # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
@@ -675,6 +707,10 @@ def handle(command):
             return ("Abhi mere paas aapke baare mein kuch save nahi hai, sir. "
                     "'Yaad rakhna ki...' bolke kuch bata dijiye.")
         return "Sir, mujhe yaad hai: " + " ".join(f if f.endswith(".") else f + "." for f in facts)
+
+    reply = _read_command(command, text)          # Padh ke sunao (screen / page link / clipboard)
+    if reply:
+        return reply
 
     # --- Screen: "screen pe kya hai" -> seedha look_at_screen (jawab DirectReply se aata hai) ---
     if SCREEN_ASK.fullmatch(text):

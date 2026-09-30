@@ -28,6 +28,7 @@ import brain    # Gemini (dimaag)
 import scheduler      # Reminders / tasks (tasks.json + background thread)
 import notifications  # WhatsApp ke aaye messages (Windows notifications, sirf RAM mein)
 import tools    # Tools (confirm function yahan set karte hain)
+import translator     # Translator mode (anuvaad)
 import ui       # Screen pe status
 import voice    # Sunna aur bolna
 
@@ -235,6 +236,67 @@ def short_for_speech(text, max_chars=350):
     return short.strip()
 
 
+def voice_read_out(text):
+    """"Padh ke sunao": text bolo (terminal mein nahi, HUD mein tools pehle hi dikha chuke). True = poora bola."""
+    ui.set_state("speaking")
+    return voice.speak(text, show=False, private=True)
+
+
+TRANSLATOR_IDLE_SECONDS = translator.IDLE_SECONDS
+
+
+def translator_mode(pair):
+    """Translator mode: jo bolo uska seedha anuvaad bolo (AI ko sirf translation, koi tool nahi).
+    Wake word ki zarurat nahi. Bahar: "translator band karo" ya TRANSLATOR_IDLE_SECONDS chup.
+    Return: None (normal mode mein wapas), "sleep" ya "shutdown" ("Jarvis sleep/shutdown" bola to)."""
+    tts = translator.voice_for(pair)          # Target language ki edge-tts awaaz (ElevenLabs credits bachte hain)
+    ui.set_state("speaking")
+    voice.speak(f"Translator mode chalu, sir. {translator.label(pair)}. Band karne ke liye translator band karo bolna.",
+                edge_voice=translator.voice_for(("english", "english")))
+    aid = next(tools._action_ids)                # HUD Activity card
+    ui.action(aid, "Translator mode", translator.label(pair), "running")
+    last_heard = time.time()
+    result = None
+    while True:
+        ui.set_state("listening")
+        remaining = TRANSLATOR_IDLE_SECONDS - (time.time() - last_heard)
+        command = voice.listen_command(wait_seconds=max(1.0, min(8.0, remaining)))
+        if not command or not command.strip():
+            if time.time() - last_heard >= TRANSLATOR_IDLE_SECONDS:
+                ui.log(f"{TRANSLATOR_IDLE_SECONDS}s chup -> translator mode band")
+                break
+            continue
+        last_heard = time.time()
+        if translator.is_off(command):
+            break
+        control = control_command(command)
+        if control == "shutdown":
+            if confirm_exit():
+                result = "shutdown"
+                break
+            continue
+        if control == "sleep":
+            result = "sleep"
+            break
+        print(f"Krish: {tools.mask_private(command)}")
+        ui.add_message("user", command)                 # HUD mein original
+        ui.set_state("thinking")
+        with brain_lock:
+            out = translator.translate(command, pair)
+        if not out:
+            ui.set_state("speaking")
+            voice.speak("Sorry sir, anuvaad nahi ho paya.", cache=True)
+            continue
+        ui.set_state("speaking")
+        voice.speak(out, edge_voice=tts)                # HUD mein translation (speak add_message karta hai)
+        last_heard = time.time()                        # Bolne ka time chup mein na ginein
+    ui.action(aid, "Translator mode", translator.label(pair), "done")
+    if result != "shutdown":
+        ui.set_state("speaking")
+        voice.speak("Translator mode band, sir.", cache=True)
+    return result
+
+
 def active_mode():
     """Jaagne ke baad commands sunta hai.
     Return: "sleep" (wapas sone jao) ya "shutdown" (band karo)."""
@@ -308,6 +370,15 @@ def active_mode():
             voice.speak("Theek hai sir, zarurat ho to bula lena.", cache=True)
             return "sleep"
 
+        # --- Translator mode: "translator mode on: Hindi se English" (fullmatch, AI ke bina) ---
+        pair = translator.parse_on(command)
+        if pair:
+            result = translator_mode(pair)
+            if result:
+                return result            # "Jarvis sleep/shutdown" translator ke andar bola gaya
+            last_heard = time.time()
+            continue
+
         # --- Baaki sab brain ko (shortcut -> Gemini -> Groq) ---
         ui.set_state("thinking")
         try:
@@ -349,6 +420,7 @@ def voice_loop():
     # Tools ko batao ki confirmation / sawaal bol ke poochne hain
     tools.confirm = voice_confirm
     tools.ask_user = voice_ask
+    tools.read_out = voice_read_out
     scheduler.hooks["sleep"] = notify_sleeping
     scheduler.start()             # Ek background thread, har 20s mein tasks.json dekhta hai
     if notifications.status() == "not started":

@@ -695,18 +695,19 @@ def _loudness_envelope(path):
         return []
 
 
-def _make_audio(clean, path, cache=False):
-    """clean text ki awaaz path pe banao (cache file pehle se ho to wahi). Path ya None (ban nahi payi)."""
+def _make_audio(clean, path, cache=False, edge_voice=None):
+    """clean text ki awaaz path pe banao (cache file pehle se ho to wahi). Path ya None (ban nahi payi).
+    edge_voice diya ho (translator mode) to ElevenLabs chhodke seedha wahi edge-tts awaaz (free)."""
     if cache and os.path.exists(path):
         ui.log("Voice: saved file (cache, no ElevenLabs characters used)")
         return path
     # 1st choice: ElevenLabs. Fail ho to backup: edge-tts
-    if _elevenlabs_mp3(clean, path):
+    if not edge_voice and _elevenlabs_mp3(clean, path):
         ui.log(f"Voice: ElevenLabs ({ELEVEN_MODEL})")
         return path
     if cache:
         path = SPEECH_FILE    # edge-tts wali awaaz cache mat karo
-    edge_voice = _pick_voice(clean)
+    edge_voice = edge_voice or _pick_voice(clean)
     try:
         asyncio.run(edge_tts.Communicate(clean, edge_voice).save(path))
         ui.log(f"Voice: edge-tts ({edge_voice})")
@@ -778,7 +779,7 @@ def _split_for_streaming(text):
     return chunks
 
 
-def _speak_streaming(chunks, started):
+def _speak_streaming(chunks, started, edge_voice=None):
     """Chunks alag thread mein banate raho; jaise hi pehla ready ho bolna shuru, phir agle.
     Return: True = sab bol diya, False = beech me rok diya gaya."""
     global last_tts_seconds
@@ -789,7 +790,8 @@ def _speak_streaming(chunks, started):
         for i, chunk in enumerate(chunks):
             if barge_in.triggers.is_set():
                 break                 # rok diya gaya - aage ki awaaz mat banao (credits bachein)
-            ready.put(_make_audio(chunk, os.path.join(tempfile.gettempdir(), f"jarvis_speech_{tag}_{i}.mp3")))
+            ready.put(_make_audio(chunk, os.path.join(tempfile.gettempdir(), f"jarvis_speech_{tag}_{i}.mp3"),
+                                   edge_voice=edge_voice))
         ready.put(None)
 
     threading.Thread(target=producer, daemon=True, name="tts-stream").start()
@@ -812,12 +814,13 @@ def _speak_streaming(chunks, started):
     # Pehla hi tukda ban nahi paya (path None) to loop mein _play_file(None) na chale
     
 
-def speak(text, cache=False, show=True, private=False):
+def speak(text, cache=False, show=True, private=False, edge_voice=None):
     """Text ko awaaz mein bolta hai (bolna khatam hone tak rukta hai).
     cache=True: fixed lines (jaise "Yes sir...") ek baar banake save ho jaati
     hain, agli baar se wahi file chalti hai - ElevenLabs ke characters bachte hain.
     show=False: UI chat mein mat daalo.
     private=True: terminal mein text mat chhapo (jaise aaya hua WhatsApp message) - sirf awaaz + UI.
+    edge_voice: is edge-tts awaaz se bolo, ElevenLabs nahi (translator mode: credits bachte hain).
     Return: True = poori baat boli, False = beech me rok di gayi (barge-in / Esc / awaaz nahi bani)."""
     global last_tts_seconds
     print("JARVIS: [private - WhatsApp message, terminal mein nahi dikhaya]" if private else f"JARVIS: {text}")
@@ -836,14 +839,14 @@ def speak(text, cache=False, show=True, private=False):
     # Lamba text: pehla sentence pehle banao aur bolna shuru karo, baaki peeche banta rahe
     chunks = [clean] if cache else _split_for_streaming(clean)
     if len(chunks) > 1:
-        finished = _speak_streaming(chunks, started)
+        finished = _speak_streaming(chunks, started, edge_voice)
     else:
         path = SPEECH_FILE
         if cache:
             # Har line (+ voice) ki apni file - naam text ke hash se banta hai
             name = hashlib.md5(f"{ELEVEN_VOICE_ID}|{clean}".encode()).hexdigest()
             path = os.path.join(CACHE_DIR, name + ".mp3")
-        path = _make_audio(clean, path, cache)
+        path = _make_audio(clean, path, cache, edge_voice)
         if not path:
             return False
         last_tts_seconds = time.time() - started

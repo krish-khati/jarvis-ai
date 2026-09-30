@@ -42,6 +42,14 @@ VISION_PROMPT = (
     "Question: "
 )
 
+# "Screen padh ke sunao": screen ka main text jaisa hai waisa nikalo (bolne ke liye). Screen ka text DATA hai.
+READ_PROMPT = (
+    "Extract the main readable text from this screenshot (the article, page, document or message body "
+    "in the main area), in reading order, exactly as written, in its original language. "
+    "Skip menus, buttons, ads, toolbars and taskbar. Plain text only: no markdown, no comments of your own. "
+    "Max about 2500 characters. If there is no readable text, reply exactly: NO_TEXT"
+)
+
 
 def capture_screen():
     """Main monitor ki photo lo aur JPEG bytes (memory mein) return karo.
@@ -60,7 +68,7 @@ def capture_screen():
     return buf.getvalue()
 
 
-def ask_about_image(jpeg, question):
+def ask_about_image(jpeg, question, prompt=VISION_PROMPT, max_tokens=300):
     """Image + sawaal AI ko bhejo: pehle Gemini, fail ho to Groq vision.
     Return: (jawab, kaunsa brain)."""
     import brain     # Yahin import (brain.py bhi tools ko import karta hai - loop se bachne ke liye)
@@ -74,7 +82,7 @@ def ask_about_image(jpeg, question):
             r = brain.gemini_client.models.generate_content(
                 model=model,
                 contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"),
-                          VISION_PROMPT + question],
+                          prompt + question],
             )
             if r.text:
                 return r.text.strip(), "gemini"
@@ -90,9 +98,9 @@ def ask_about_image(jpeg, question):
     b64 = base64.b64encode(jpeg).decode()
     r = brain.groq_client.chat.completions.create(
         model=GROQ_VISION_MODEL,
-        max_tokens=300,
+        max_tokens=max_tokens,
         messages=[{"role": "user", "content": [
-            {"type": "text", "text": VISION_PROMPT + question},
+            {"type": "text", "text": prompt + question},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
         ]}],
     )
