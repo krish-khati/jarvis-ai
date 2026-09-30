@@ -648,6 +648,180 @@ def brightness(action: str, level: int = None) -> str:
 
 
 # ============================================
+# 9b. FILES - naam se dhoondho aur kholo (sirf padhna + default app mein kholna)
+#   Sirf 4 folder: Documents, Downloads, Desktop, Pictures. File ka content kabhi
+#   nahi padhte; delete / edit / move / rename koi tool nahi hai.
+# ============================================
+FIND_WORDS = {"find", "search", "dhoondo", "dhundo", "dhoondh", "dhundh", "dikhao", "file", "files",
+              "latest", "naya", "nayi", "newest", "recent", "open", "kholo", "khol", "chalao"}
+FILE_OPEN_WORDS = {"open", "kholo", "khol", "kholna", "chalao", "launch", "start"}
+_SHELL_FOLDER_KEYS = {"documents": "Personal", "downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
+                      "desktop": "Desktop", "pictures": "My Pictures"}
+_FILE_TYPES = {"pdf": {".pdf"}, "word": {".doc", ".docx"}, "excel": {".xls", ".xlsx", ".csv"},
+               "ppt": {".ppt", ".pptx"}, "powerpoint": {".ppt", ".pptx"},
+               "image": {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"},
+               "photo": {".jpg", ".jpeg", ".png", ".webp"}, "video": {".mp4", ".mkv", ".avi", ".mov"},
+               "zip": {".zip", ".rar", ".7z"}, "txt": {".txt"}, "text": {".txt"}}
+_LATEST_TOKENS = {"latest", "naya", "nayi", "newest", "recent", "sabse", "last"}
+_FILLER_TOKENS = {"file", "files", "ka", "ki", "ke", "wali", "wala", "mein", "me", "se", "folder",
+                  "the", "my", "in", "from", "mera", "meri", "mere", "dhoondo", "dhundo", "find",
+                  "search", "open", "kholo", "khol", "do", "karo", "for", "a"}
+# Ye extension default app mein kholne pe program CHALA dete hain - kabhi nahi kholte
+_RUNNABLE_EXT = {".exe", ".bat", ".cmd", ".ps1", ".msi", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".lnk",
+                 ".scr", ".com", ".reg", ".hta", ".jar", ".py", ".pyw", ".dll", ".cpl", ".msc"}
+_ORDINALS = {"1": 1, "pehla": 1, "pehli": 1, "first": 1, "1st": 1, "ek": 1,
+             "2": 2, "dusra": 2, "dusri": 2, "doosra": 2, "doosri": 2, "second": 2, "2nd": 2,
+             "3": 3, "teesra": 3, "teesri": 3, "third": 3, "3rd": 3, "teen": 3,
+             "4": 4, "chautha": 4, "chauthi": 4, "fourth": 4, "4th": 4, "char": 4,
+             "5": 5, "paanchwa": 5, "paanchvi": 5, "fifth": 5, "5th": 5, "paanch": 5,
+             "6": 6, "sixth": 6, "7": 7, "seventh": 7, "8": 8, "eighth": 8}
+last_files = []          # pichle find_files ke poore rasta (sirf RAM mein)
+MAX_FILE_RESULTS = 8
+_MAX_SCAN = 20000        # itni entries se zyada nahi dekhte (tez rehne ke liye)
+_MAX_DEPTH = 4
+
+
+def _known_folder(name):
+    """Documents/Downloads/Desktop/Pictures ka asli rasta (OneDrive pe ho tab bhi sahi)."""
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+        path = os.path.expandvars(winreg.QueryValueEx(key, _SHELL_FOLDER_KEYS[name])[0])
+        if os.path.isdir(path):
+            return os.path.normpath(path)
+    except OSError:
+        pass
+    path = os.path.join(os.path.expanduser("~"), name.capitalize())
+    return os.path.normpath(path) if os.path.isdir(path) else None
+
+
+def _allowed_folders():
+    """{naam: rasta} - sirf jo folder sach mein hain."""
+    found = {n: _known_folder(n) for n in _SHELL_FOLDER_KEYS}
+    return {n: p for n, p in found.items() if p}
+
+
+def _inside_allowed(path):
+    """True agar path in 4 folder mein se kisi ke andar ki asli file hai (.. ya shortcut se bahar nahi)."""
+    real = os.path.normcase(os.path.realpath(path))
+    for folder in _allowed_folders().values():
+        base = os.path.normcase(os.path.realpath(folder))
+        if real.startswith(base + os.sep):
+            return True
+    return False
+
+
+def _folder_name(token):
+    """'downloads' / 'download' -> 'downloads'; folder ka naam nahi to None."""
+    for name in _SHELL_FOLDER_KEYS:
+        if token in (name, name.rstrip("s")):
+            return name
+    return None
+
+
+def _parse_file_query(query):
+    """query -> (folders, extensions, latest, naam ke shabd). Content kabhi nahi dekhte."""
+    tokens = re.findall(r"[\w.]+", str(query or "").lower())
+    folders, exts, latest, words = [], set(), False, []
+    for t in tokens:
+        if _folder_name(t):
+            folders.append(_folder_name(t))
+        elif t in _FILE_TYPES:
+            exts |= _FILE_TYPES[t]
+        elif t in _LATEST_TOKENS:
+            latest = True
+        elif t not in _FILLER_TOKENS:
+            words.append(t)
+    return folders, exts, latest, words
+
+
+@tool("Finding files: {query}...", needs=FIND_WORDS)
+def find_files(query: str) -> str:
+    """Find files by NAME in the user's Documents, Downloads, Desktop and Pictures folders only.
+    query = words like 'resume', 'latest pdf downloads', 'invoice pdf'. Newest files come first.
+    Returns at most 8 numbered results (name, folder, date). Never reads file content.
+    Afterwards use open_file to open one."""
+    global last_files
+    folders, exts, latest, words = _parse_file_query(query)
+    roots = _allowed_folders()
+    chosen = {n: roots[n] for n in folders if n in roots} or roots
+    if not chosen:
+        return "Error: Documents/Downloads/Desktop/Pictures folders not found"
+    if not (words or exts or latest):
+        return "Could not search: tell me a file name, a type like pdf, or say 'latest'."
+    hits, scanned = [], 0
+    skip = {"node_modules", ".git", "__pycache__", "appdata"}
+    for label, root in chosen.items():
+        stack = [(root, 0)]
+        while stack and scanned < _MAX_SCAN:
+            folder, depth = stack.pop()
+            try:
+                entries = list(os.scandir(folder))
+            except OSError:
+                continue
+            for e in entries:
+                scanned += 1
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if depth < _MAX_DEPTH and not e.name.startswith(".") and e.name.lower() not in skip:
+                            stack.append((e.path, depth + 1))
+                        continue
+                    if not e.is_file(follow_symlinks=False) or e.name.startswith((".", "~$")):
+                        continue
+                    name = e.name.lower()
+                    if exts and os.path.splitext(name)[1] not in exts:
+                        continue
+                    if words and not all(w in name for w in words):
+                        continue
+                    hits.append((e.stat().st_mtime, e.path, label))
+                except OSError:
+                    continue
+    hits.sort(key=lambda h: h[0], reverse=True)      # Sabse naya pehle
+    hits = hits[:MAX_FILE_RESULTS]
+    last_files = [h[1] for h in hits]
+    if not hits:
+        return "No matching files found in Documents, Downloads, Desktop, Pictures."
+    lines = [f"{i}. {os.path.basename(path)} ({label}, "
+             f"{datetime.datetime.fromtimestamp(m).strftime('%d %b %Y')})"
+             for i, (m, path, label) in enumerate(hits, 1)]
+    return f"Found {len(hits)} file(s):\n" + "\n".join(lines)
+
+
+@tool("Opening file: {which}...", needs=FILE_OPEN_WORDS)
+def open_file(which: str) -> str:
+    """Open a file from the LAST find_files result in its default app. which = the result number
+    ('1', 'pehli', 'second') or part of the file name. Only files inside Documents, Downloads,
+    Desktop or Pictures; programs/scripts are never opened. Cannot delete, edit, move or rename."""
+    key = str(which or "").strip().lower()
+    if not last_files:
+        return "Could not open: no file list yet. Use find_files first."
+    path = None
+    n = _ORDINALS.get(key)
+    if n is None and re.fullmatch(r"\d{1,2}", key):
+        n = int(key)
+    if n is not None:
+        if 1 <= n <= len(last_files):
+            path = last_files[n - 1]
+    else:
+        parts = [w for w in re.findall(r"[\w.]+", key) if w not in _FILLER_TOKENS]
+        matches = [f for f in last_files if parts and all(w in os.path.basename(f).lower() for w in parts)]
+        if len(matches) == 1:
+            path = matches[0]
+        elif len(matches) > 1:
+            return "Could not open: more than one match, ask Krish for the number."
+    if not path:
+        return "Could not open: that file is not in the last search results."
+    if not os.path.isfile(path) or not _inside_allowed(path):
+        return "Could not open: file is missing or outside Documents/Downloads/Desktop/Pictures."
+    if os.path.splitext(path)[1].lower() in _RUNNABLE_EXT:
+        return "Could not open: programs and scripts are never opened by JARVIS."
+    if DRY_RUN:
+        return _dry_run(f"open file {os.path.basename(path)}")
+    os.startfile(path)
+    return f"Opened {os.path.basename(path)}"
+
+
+# ============================================
 # 10. PC LOCK
 # ============================================
 @tool("Locking PC...", needs=LOCK_WORDS)
@@ -995,7 +1169,7 @@ def read_messages() -> str:
 ALL_TOOLS = [
     web_search, get_weather, open_website, play_on_youtube, open_app, close_app,
     get_time_date, system_info, take_screenshot, set_volume, set_mute, volume_change,
-    media_control, brightness,
+    media_control, brightness, find_files, open_file,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen,
     send_whatsapp, whatsapp_call, end_call, read_messages,

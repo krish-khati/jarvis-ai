@@ -8,6 +8,7 @@
 # wo AI ke paas jaayega. Match na ho to handle() None deta hai -> AI sambhalega.
 # ============================================
 
+import os
 import re          # Patterns (regex) se command pehchanne ke liye
 
 import tools       # Asli kaam tools karte hain (UI log + try/except + DRY_RUN wahi hai)
@@ -355,6 +356,83 @@ def _tool_reply(result, hi, yes_hi, yes_en):
     return yes_hi if hi else yes_en
 
 
+# ============================================
+# Files: "downloads mein latest pdf kholo", "resume file dhoondo", "pehli wali kholo"
+#   Sab fullmatch. "chrome kholo" jaisa app command yahan nahi aata: kholne wale command
+#   mein folder ya "latest" ya file-type zaroor chahiye (code mein check hota hai).
+# ============================================
+_F_DIR = r"(?:downloads?|documents?|desktop|pictures?)"
+_F_TYPE = r"(?:pdf|word|excel|ppt|powerpoint|image|photo|video|zip|txt|file)"
+_F_LATEST = r"(?:latest|naya|nayi|newest|recent|sabse naya|sabse nayi)"
+_F_OPEN = r"(?:kholo|khol do|khol de|open karo|open kar do)"
+_F_NUM = r"(?:\d|pehl[ai]|dusr[ai]|doosr[ai]|teesr[ai]|chauth[ai]|first|second|third|fourth|fifth)"
+FILE_OPEN_HI = re.compile(
+    rf"(?:(?P<f1>{_F_DIR}) (?:mein|me|se|ki|ka|ke) )?(?:(?P<lat>{_F_LATEST}) )?(?P<type>{_F_TYPE})"
+    rf"(?: file)?(?: (?P<f2>{_F_DIR}) (?:mein|me|se|wali|wala|ki|ka))? {_F_OPEN}")
+FILE_OPEN_EN = re.compile(
+    rf"open (?:the |my )?(?:(?P<lat>{_F_LATEST}) )?(?P<type>{_F_TYPE})(?: file)?"
+    rf"(?: (?:in|from) (?:the |my )?(?P<f2>{_F_DIR})(?: folder)?)?")
+FILE_FIND_HI = re.compile(
+    rf"(?:(?P<f>{_F_DIR}) (?:mein|me|ki|ka) )?(?P<q>.+?) (?:file |files )?"
+    rf"(?:dhoondo|dhundo|dhoondh do|dhundh do|find karo|search karo)")
+FILE_FIND_EN = re.compile(
+    rf"(?:find|search for) (?:the |my )?(?P<q>.+?)(?: (?:in|from) (?:the |my )?(?P<f>{_F_DIR})(?: folder)?)?")
+FILE_PICK = re.compile(
+    rf"(?:(?:file|number|no) )?(?P<n>{_F_NUM})(?: wali| wala| number)*(?: file)? {_F_OPEN}"
+    rf"|open (?:the )?(?:file )?(?:number )?(?P<n2>{_F_NUM})(?: file)?")
+
+
+def _file_names_reply(hi):
+    """Pichle find_files ke naam bolne layak (numbered) - kaunsi kholun poochne ke liye."""
+    base = [os.path.splitext(os.path.basename(p))[0] for p in tools.last_files]
+    # Same naam do baar ho to folder ka naam jodo (Downloads / Desktop) taaki farak pata chale
+    names = [f"{i}. {b}" + (f" ({os.path.basename(os.path.dirname(p))})" if base.count(b) > 1 else "")
+             for i, (b, p) in enumerate(zip(base, tools.last_files), 1)]
+    return "; ".join(names[:5])
+
+
+def _files_command(text, hi):
+    """File dhoondho / kholo (bina AI). Jawab (text) ya None (AI ke paas jaao)."""
+    # --- "pehli wali kholo" / "file 2 kholo": sirf jab pehle koi list bani ho ---
+    m = FILE_PICK.fullmatch(text) if tools.last_files else None
+    if m:
+        result = tools.open_file(m["n"] or m["n2"])
+        return _tool_reply(result, hi, "File khol di, sir.", "Opened the file, sir.")
+
+    # --- "downloads mein latest pdf kholo" ---
+    m = FILE_OPEN_HI.fullmatch(text) or FILE_OPEN_EN.fullmatch(text)
+    if m and (m["lat"] or m["f2"] or ("f1" in m.groupdict() and m["f1"])):
+        folder = m["f2"] or (m.groupdict().get("f1"))
+        kind = "" if m["type"] == "file" else m["type"]
+        result = tools.find_files(" ".join(x for x in (folder, m["lat"], kind) if x))
+        if result.startswith(("Error", "Could not", "BLOCKED")):
+            return f"Sorry sir, {result}"
+        if not tools.last_files:
+            return "Sir, aisi koi file nahi mili." if hi else "I couldn't find such a file, sir."
+        if m["lat"] or len(tools.last_files) == 1:       # "latest" = sabse nayi ek hi file
+            result = tools.open_file("1")
+            return _tool_reply(result, hi, "File khol di, sir.", "Opened the file, sir.")
+        return (f"Sir, {len(tools.last_files)} files mili: {_file_names_reply(hi)}. Kaunsi kholun?"
+                if hi else f"I found {len(tools.last_files)} files: {_file_names_reply(hi)}. Which one?")
+
+    # --- "resume file dhoondo" / "find resume file" ---
+    m = FILE_FIND_HI.fullmatch(text) or FILE_FIND_EN.fullmatch(text)
+    if m:
+        q = " ".join(x for x in (m["f"], m["q"]) if x)
+        hint = set(q.split()) & {"file", "files", "pdf", "word", "excel", "ppt", "powerpoint", "image",
+                                 "photo", "video", "zip", "txt", "downloads", "download", "documents",
+                                 "document", "desktop", "pictures", "picture"}
+        if hint or "file" in text.split() or "files" in text.split():
+            result = tools.find_files(q)
+            if result.startswith(("Error", "Could not", "BLOCKED")):
+                return f"Sorry sir, {result}"
+            if not tools.last_files:
+                return "Sir, aisi koi file nahi mili." if hi else "I couldn't find such a file, sir."
+            return (f"Sir, {len(tools.last_files)} files mili: {_file_names_reply(hi)}. Kaunsi kholun?"
+                    if hi else f"I found {len(tools.last_files)} files: {_file_names_reply(hi)}. Which one?")
+    return None
+
+
 def _media_command(text, hi):
     """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
     # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
@@ -489,6 +567,10 @@ def handle(command):
 
     # --- Media keys / volume relative / brightness (app/website se PEHLE, warna "chalu karo"
     #     wali commands galat jagah chali jaati hain) ---
+    reply = _files_command(text, hi)      # Files pehle: "downloads mein pdf kholo" open-app se na takraye
+    if reply:
+        return reply
+
     reply = _media_command(text, hi)
     if reply:
         return reply
