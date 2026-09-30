@@ -274,6 +274,8 @@ def open_website(name: str) -> str:
 def play_on_youtube(song: str) -> str:
     """Play a song or video on YouTube (opens the top result and starts playing).
     ONLY use when Krish asks to play/chalao/bajao something."""
+    if not song or not song.strip():
+        return "Error: no song name given, ask Krish what to play"
     import pywhatkit    # Yahin import kiya kyunki ye load hone mein time leta hai
     pywhatkit.playonyt(song)
     return f"Playing '{song}' on YouTube"

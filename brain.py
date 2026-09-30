@@ -122,6 +122,9 @@ def _model_failed(model, code):
 last_brain = None
 
 # System prompt - ye JARVIS ki personality aur rules batata hai (dono brains ke liye same)
+import logging as _logging
+_logging.getLogger("google_genai.types").setLevel(_logging.ERROR)   # AFC warning chup
+
 SYSTEM_PROMPT = (
     "You are JARVIS, a smart friendly assistant for Krish. "
     "Reply in the same language user uses (Hindi/Hinglish/English). "
@@ -174,7 +177,8 @@ SYSTEM_PROMPT = (
 def system_prompt():
     """Rules + Krish ki saved memories (+ aakhri aaya WhatsApp message, reply ke liye).
     Har request pe naya banta hai (Gemini aur Groq dono)."""
-    prompt = SYSTEM_PROMPT
+    import datetime
+    prompt = SYSTEM_PROMPT + f"\n\nToday's date: {datetime.date.today().strftime('%A, %d %B %Y')}."
     facts = memory.all_facts()
     if facts:
         prompt += ("\n\nThings you know about Krish (long-term memory, use when relevant):\n"
@@ -236,6 +240,7 @@ def _tidy(text):
     text = re.sub(r"(?<!\w)\*(?!\s)|(?<!\s)\*(?!\w)", "", text)
     text = re.sub(r"(?m)^\s*#+\s*", "", text)
     text = re.sub(r"\.([A-Z][a-z])", r". \1", text)        # "liya.Kuch" -> "liya. Kuch"
+    text = re.sub(r"^\(\s*no\s*\)\s*", "", text, flags=re.IGNORECASE)   # "(no)Okay." jaisa kachra
     text = _roman_stray_hindi(text)
     text = _remove_repeats(text).strip()
     # Har jawab ke end mein "Kuch aur madad chahiye?" jaisa bhara-bharaya sawaal hatao
@@ -312,7 +317,13 @@ def _ask_gemini(message, model):
         history=past,
     )
     response = chat.send_message(message)
-    return response.text or "Done, sir."    # Kabhi text khaali aaye to bhi kuch bolo
+    # response.text non-text parts pe warning deta hai - text parts khud jodo
+    try:
+        parts = response.candidates[0].content.parts or []
+        text = "".join(p.text for p in parts if getattr(p, "text", None))
+    except (AttributeError, IndexError, TypeError):
+        text = ""
+    return text or "Done, sir."    # Kabhi text khaali aaye to bhi kuch bolo
 
 
 # ============================================
@@ -352,6 +363,7 @@ def _ask_groq(message, note=""):
     messages += [{"role": h["role"], "content": h["text"]} for h in history]
     messages.append({"role": "user", "content": message + note})
 
+    ran = {}                # (tool, args) -> result: Groq wahi tool dobara maange to dobara mat chalao
     for _ in range(5):      # Zyada se zyada 5 round (warna infinite loop ka khatra)
         response = groq_client.chat.completions.create(
             model=GROQ_MODEL,
@@ -383,7 +395,10 @@ def _ask_groq(message, note=""):
             else:
                 try:
                     args = json.loads(call.function.arguments or "{}")
-                    result = func(**args)     # Tool khud try/except, DRY_RUN, confirm sambhalta hai
+                    key = (call.function.name, json.dumps(args, sort_keys=True))
+                    if key not in ran:
+                        ran[key] = func(**args)   # Tool khud try/except, DRY_RUN, confirm sambhalta hai
+                    result = ran[key]
                 except (json.JSONDecodeError, TypeError) as e:
                     result = f"Error: bad arguments for {call.function.name}: {e}"
             messages.append({"role": "tool", "tool_call_id": call.id, "content": str(result)})

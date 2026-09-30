@@ -224,6 +224,16 @@ body[data-state="thinking"] .dial-core .state { color: var(--amber); }
 .btn:hover { box-shadow: 0 0 22px rgba(31,169,255,0.6), inset 0 0 14px rgba(31,169,255,0.35); transform: translateY(-2px); }
 .btn:active { transform: scale(0.94); }
 .btn svg { width: 24px; height: 24px; }
+/* STOP button: bologe-bolte rokne ke liye (awaz + Esc dono ka backup) */
+.btn.stop {
+  color: var(--amber);
+  border-color: rgba(255,178,71,0.55);
+  background: radial-gradient(circle, rgba(255,140,60,0.2), rgba(60,26,8,0.6) 70%);
+  box-shadow: 0 0 14px rgba(255,150,60,0.3), inset 0 0 12px rgba(255,150,60,0.2);
+}
+.btn.stop:hover { box-shadow: 0 0 22px rgba(255,150,60,0.6), inset 0 0 14px rgba(255,150,60,0.4); }
+/* Sirf bolte waqt full dikhao - baaki waqt halka (click karna band) */
+body:not([data-state="speaking"]) .btn.stop { opacity: 0.25; pointer-events: none; }
 .btn span {
   position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
   font-size: 0.62rem; letter-spacing: 0.14em; color: var(--blue); white-space: nowrap; text-transform: uppercase;
@@ -439,6 +449,8 @@ body.snap, body.snap * { transition: none !important; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Files</span></button>
       <button class="btn" data-cmd="screen pe kya hai" title="Scan screen" aria-label="Scan screen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><path d="M7 12h10"/></svg><span>Scan</span></button>
+      <button class="btn stop" id="stopBtn" title="Bologe bolte roko (ya Esc)" aria-label="Stop speaking">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span>Stop</span></button>
     </div>
   </footer>
 </main>
@@ -743,7 +755,11 @@ body.snap, body.snap * { transition: none !important; }
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { send(input.value); input.value = ""; } });
   document.querySelectorAll(".btn[data-cmd]").forEach((b) => b.addEventListener("click", () => send(b.dataset.cmd)));
 
-  // Esc = window chhupao (Python hide karta hai)
+  // STOP button = bologe bolte roko (voice ke bina, click se). Esc ka backup.
+  const stopPy = () => { try { const a = window.pywebview && window.pywebview.api; if (a && a.stop) a.stop(); } catch (e) {} };
+  $("stopBtn").addEventListener("click", (e) => { e.stopPropagation(); stopPy(); });
+
+  // Esc = bolna roko + window chhupao (Python hide karta hai)
   addEventListener("keydown", (e) => {
     if (e.key === "Escape" && window.pywebview && window.pywebview.api && window.pywebview.api.hide) window.pywebview.api.hide();
   });

@@ -10,6 +10,9 @@ models/
 # Saved awaaz files (apne aap dobara ban jaati hain)
 voice_cache/
 
+# Awaaz test files (make_voice_test.py) - sirf sunne ke liye, GitHub pe nahi
+voice_test/
+
 # JARVIS ki memory - aapki personal baatein, GitHub pe nahi jaani chahiye
 memory.json
 memory.json.broken

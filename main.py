@@ -281,7 +281,11 @@ def active_mode():
         ui.set_state("speaking")
         # WhatsApp message padh ke sunaya ho to terminal mein text mat chhapo
         private, tools.private_reply = tools.private_reply, False
-        voice.speak(short_for_speech(reply) if not private else reply, private=private)
+        # Barge-in / Esc se beech mein rok diya gaya to baki latency ka hisaab
+        # bekaar hai - seedha wapas sunne (listening) par chale jao
+        if not voice.speak(short_for_speech(reply) if not private else reply, private=private):
+            ui.log("Jawab beech me ruk diya gaya - wapas sun raha hoon")
+            continue
 
         # --- Latency: sunne ke baad awaaz shuru hone tak kitna time laga ---
         total = command_stt + brain_seconds + voice.last_tts_seconds
@@ -353,8 +357,13 @@ class Api:
         return reply
 
     def hide(self):
-        """Esc dabane pe window chhupao (JARVIS background mein chalta rahe)."""
+        """Esc dabane pe bolna rok do aur window chhupao (background mein chalta rahe)."""
+        voice.stop_speaking()
         ui.hide_window()
+
+    def stop(self):
+        """HUD ke STOP button / Esc: sirf bolna rok do (window khuli rahe)."""
+        voice.stop_speaking()
 
 
 def ui_prompt(question):

@@ -43,8 +43,8 @@ load_dotenv()
 ELEVEN_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVEN_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")  # default: George
 # Flash model: tez hai, Hindi/English/Hinglish teeno bolta hai, aur credits kam khata hai.
-# Aur achhi (par mehngi) awaaz chahiye to "eleven_multilingual_v2" try karo.
-ELEVEN_MODEL = "eleven_flash_v2_5"
+# Aur achhi (par mehngi) awaaz chahiye to "eleven_multilingual_v2" try karo (.env se badalta hai).
+ELEVEN_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
 
 # edge-tts (backup awaaz) - jab ElevenLabs kaam na kare
 ENGLISH_VOICE = "en-GB-RyanNeural"     # British awaaz (JARVIS jaisi)
@@ -133,6 +133,37 @@ POST_SPEECH_GAP_MS = 150
 # goonj pe trigger na ho) - lekin wo audio pre-roll mein rakha jaata hai, taaki agar aap
 # turant bolna shuru karo to pehla word na kate. Gap + guard = 0.55s goonj se bachav.
 ECHO_GUARD_MS = 400
+
+# --- Barge-in: JARVIS bolte waqt aap usse rok sakte ho ---
+# BARGE_IN=1 (.env) = chalu, 0 = band. Chale to bolte waqt Vosk chhoti grammar se
+# sirf in shabdon ko sunta hai: "stop, wait, enough, skip, hold on" (comma se badlo).
+# NOTE: is Vosk model (vosk-model-small-en-in-0.4) ke shabd-glyph mein "ruk", "jao",
+# "chup", "karo" HAIN HI NAHI - Vosk unhe warning ke saath chhod deta hai. Isliye
+# Hinglish "ruk jao" ke bajaye English "stop" bolna padta hai (report mein bataya gaya).
+BARGE_IN = os.getenv("BARGE_IN", "1") == "1"
+BARGE_IN_WORDS = [w.strip() for w in
+                  os.getenv("BARGE_IN_WORDS", "stop, wait, enough, skip, hold on").split(",")
+                  if w.strip()]
+# Gate: playback ke dauran jo mic sun raha hai wo JARVIS ki GOONJ hai. Uska level
+# nikaal ke usse 1.6 guna ka darwaza banaya jaata hai - laptop speaker pe goonj badi
+# hoti hai to darwaza upar chala jaata hai aur goonj reject ho jaati hai (galti se
+# JARVIS rukega nahi). TWS/earphone pe goonj hoti hi nahi -> darwaza normal rehta
+# hai aur aapki awaaz 0.2-0.4s mein pakdi jaati hai. Kamzor karo: 1.3 (zyada trigger),
+# mazboot karo: 2.5 (zyada safe).
+BARGE_IN_GATE_MULT = float(os.getenv("BARGE_IN_GATE_MULT", "1.6"))
+BARGE_IN_MIN_GATE = float(os.getenv("BARGE_IN_MIN_GATE", "900"))   # sab se neeche ka darwaza
+# Latch: itne 80ms tukde LAGATAR darwaze se upar aaye tabhi suno (4 x 80ms = 0.32s).
+# Door ka dhat, tap, ya goonj ka ek tukda trigger nahi karega.
+BARGE_IN_LATCH_BLOCKS = int(os.getenv("BARGE_IN_LATCH_BLOCKS", "4"))
+# Awaaz tez aayi -> confirm: itne ms tak audio Vosk ko dete raho, phir FinalResult dekho
+# (0.4s = trigger ~0.56s me, 39/39 test me pakda; 0.2 = jaldi par miss hone ka khatra)
+BARGE_IN_CONFIRM_MS = int(os.getenv("BARGE_IN_CONFIRM_MS", "400"))
+# Bolna shuru hote hi pehle itne ms khaali (goonj abhi banti hai, Vosk ko mat suno)...
+BARGE_IN_WARMUP_MS = int(os.getenv("BARGE_IN_WARMUP_MS", "400"))
+# ...aur bolna khatam hone ke baad itne ms tak mic khula rahega par trigger band
+# (speaker ki goonj utar rahi hoti hai; gate update hota rehta hai taaki wahi dobara
+# trigger na karaye)
+BARGE_IN_ECHO_GUARD_MS = int(os.getenv("BARGE_IN_ECHO_GUARD_MS", "300"))
 
 # Background noise SLEEP MODE mein naapte hain (jab JARVIS chup hai aur speaker band hai)
 # aur wahi yaad rakhte hain. Listening mein dobara nahi naapte - kyunki tab JARVIS abhi
@@ -392,6 +423,185 @@ def listen_command(wait_seconds=8):
 
 
 # ============================================
+# 2b. BARGE-IN - bolte waqt rokna
+# ============================================
+class BargeIn:
+    """JARVIS bolte waqt aapki awaaz sunta hai aur "stop" sunke bolna rok deta hai.
+
+    Do qadam, isi kadam mein:
+      1) GATE - mic ki loudness. Playback ke dauran jo bhi sunaayi de raha hai wo
+         JARVIS ki goonj hai; uska peak nikaal ke usse BARGE_IN_GATE_MULT guna
+         darwaza banta hai. Laptop speaker pe goonj tez hoti hai -> darwaza upar ->
+         goonj reject (galti se rukega nahi). TWS pe goonj nahi -> darwaza normal.
+      2) VOSK - sirf tab, jab darwaza cross ho. Chhoti grammar (4-5 shabd) + [unk],
+         PartialResult se turant. Goonj darwaze se pehle hi rok di gayi hai, isliye
+         Vosk ko sirf aapki awaaz milti hai (galti ke trigger band).
+    Halka hai: 80ms ke tukde, ek thread, chhoti grammar.
+    """
+
+    def __init__(self, enabled=None, words=None, gate_mult=None, min_gate=None,
+                 latch_blocks=None, warmup_ms=None, echo_guard_ms=None, confirm_ms=None):
+        self.enabled = BARGE_IN if enabled is None else enabled
+        self.words = list(BARGE_IN_WORDS if words is None else words)
+        self.gate_mult = BARGE_IN_GATE_MULT if gate_mult is None else gate_mult
+        self.min_gate = BARGE_IN_MIN_GATE if min_gate is None else min_gate
+        self.latch_blocks = BARGE_IN_LATCH_BLOCKS if latch_blocks is None else latch_blocks
+        self.warmup_ms = BARGE_IN_WARMUP_MS if warmup_ms is None else warmup_ms
+        self.echo_guard_ms = BARGE_IN_ECHO_GUARD_MS if echo_guard_ms is None else echo_guard_ms
+        self.confirm_ms = BARGE_IN_CONFIRM_MS if confirm_ms is None else confirm_ms
+        # Grammar: shabd + "[unk]" (baaki sab awaaz unknown)
+        self.grammar = json.dumps(self.words + ["[unk]"])
+        # Trigger sirf in shabdon par: "hold on" ke liye 'hold' bhi maano
+        self.words_set = {w for phrase in self.words for w in phrase.split()}
+        self.triggers = threading.Event()      # set = "ab bolna band karo"
+        self.heard = ""                        # Vosk ne kya suna (HUD log ke liye)
+        self.echo = 0.0                        # playback ke dauran mic ka peak (goonj)
+        self.gate = self.min_gate              # current darwaza
+        self.level = 0.0                       # aakhri block ka RMS (log/test ke liye)
+        self._rec = None
+        self._loud_run = 0
+        self._blocks = 0
+        self._cand = None                      # candidate block (loud + latch)
+        self._done = False                     # ek FinalResult ke baad band
+        self._ignore_until = 0.0
+        self._stream = None
+        self._queue = None
+        self._worker = None
+        self._quit = threading.Event()
+
+    def clear(self):
+        """Pichla trigger hatao (har naye bolne se pehle)."""
+        self.triggers.clear()
+        self.heard = ""
+
+    def reset(self):
+        """Naye bolne ka shuru: trigger saaf, gate reset, shuruaat ke warmup tak sunna band
+        (goonj abhi bani hi nahi hogi), naya recognizer."""
+        self.clear()
+        self.echo = 0.0
+        self.gate = self.min_gate
+        self.level = 0.0
+        self._loud_run = 0
+        self._blocks = 0
+        self._cand = None
+        self._done = False
+        self._ignore_until = time.time() + self.warmup_ms / 1000.0
+        self._rec = vosk.KaldiRecognizer(vosk_model, SAMPLE_RATE, self.grammar)
+
+    def freeze(self, ms=None):
+        """Trigger band karo par sunna jaari rakho (gate update hota rahe)."""
+        ms = self.echo_guard_ms if ms is None else ms
+        self._ignore_until = max(self._ignore_until, time.time() + ms / 1000.0)
+
+    def _new_rec(self):
+        self._rec = vosk.KaldiRecognizer(vosk_model, SAMPLE_RATE, self.grammar)
+        self._cand = None
+        self._loud_run = 0
+
+    def feed(self, block):
+        """Ek 80ms ka mic tukda. True = "ab bolna band karo".
+        Tez: gate + latch. Confirm: loud hone ke baad confirm_ms tak audio Vosk ko dete
+        rahe hain, phir EK FinalResult - usme rokne wala shabd hai to rok do.
+        (PartialResult bekaar tha: itna chhota audio se hypothesis nahi banti, aur baar
+        baar FinalResult() decoder ko reset kar deta hai - dono test me dekha.)"""
+        rms = float(np.abs(np.frombuffer(block, dtype=np.int16)).mean())
+        self.level = rms
+        n = self._blocks
+        self._blocks += 1
+        # Gate PICHLE echo se banta hai. Jo block gate se upar hai wo user ki awaaz maani
+        # jaati hai - use echo mein mat jodo (warna gate apni hi awaaz ke saath bhaag jaata hai
+        # aur rms >= gate kabhi sach nahi hota). Warmup/guard mein sab goonj hai, sab jodo.
+        guard = time.time() < self._ignore_until
+        loud = rms >= self.gate
+        self.echo = self.echo * 0.99                 # goonj ka peak, dheere-dheere girta rahe
+        if guard or not loud:
+            self.echo = max(self.echo, rms)
+        prev_gate = self.gate
+        self.gate = max(self.echo * self.gate_mult, self.min_gate)
+        if guard:                                    # warmup / goonj-guard: sirf gate update
+            return False
+        if self._done:                               # confirm ho chuka - trigger dobara nahi
+            return False
+        # Latch: darwaze se upar LAGATAR itne tukde
+        self._loud_run = self._loud_run + 1 if rms >= prev_gate else 0
+        if self._cand is None and self._loud_run >= self.latch_blocks:
+            self._cand = n
+        if n < self.warmup_ms / 1000.0 * 12.5:      # warmup ka audio recognizer ko nahi
+            return False
+        # AcceptWaveform True = Vosk ne khud endpoint (chuppi) pe result de diya; agar use
+        # nahi padha to baad ka FinalResult khaali aata hai - isliye yahin check karo
+        if self._rec.AcceptWaveform(block) and self._cand is not None:
+            return self._confirm(json.loads(self._rec.Result())["text"])
+        if self._cand is None:
+            return False
+        if (n - self._cand) * 0.08 >= self.confirm_ms / 1000.0:
+            return self._confirm(json.loads(self._rec.FinalResult())["text"])   # ek hi call
+        return False
+
+    def _confirm(self, hyp):
+        """Vosk ka text rokne wale shabd se mila? Ek candidate = ek hi faisla."""
+        self._done = True
+        if set(hyp.split()) & self.words_set:
+            self.heard = hyp
+            self.triggers.set()
+            return True
+        self._new_rec()
+        return False
+
+    def start(self):
+        """Mic kholo aur sunna shuru karo (band ho to kuch nahi hota)."""
+        if not self.enabled or self._stream is not None:
+            return
+        self.reset()
+        self._quit.clear()
+        self._queue = queue.Queue()
+        self._stream = sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=wakeword.FRAME,
+                                         dtype="int16", channels=1,
+                                         callback=lambda d, f, t, s: self._queue.put(bytes(d)))
+        self._stream.start()
+        self._worker = threading.Thread(target=self._run, daemon=True, name="barge-in")
+        self._worker.start()
+
+    def _run(self):
+        while not self._quit.is_set() and not self.triggers.is_set():
+            try:
+                block = self._queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            try:
+                if self.feed(block):            # "stop" mil gaya
+                    ui.log(f"Barge-in: '{self.heard}' suna - bolna ruka")
+                    return
+            except Exception:
+                return
+
+    def stop(self):
+        """Mic band. _play_file ke baad call hota hai (listening khud mic kholega)."""
+        self._quit.set()
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+
+barge_in = BargeIn()          # poole JARVIS ka ek hi barge-in
+
+
+def stop_speaking():
+    """Esc / HUD button se bolna rok do. Awaaz thi to True."""
+    barge_in.triggers.set()        # _play_file ise dekh ke ruk jayega
+    if pygame.mixer.music.get_busy():
+        pygame.mixer.music.stop()
+        ui.set_level(0)
+        ui.log("Stopped (Esc)")
+        return True
+    return False
+
+
+# ============================================
 # 3. BOLNA - edge-tts + pygame
 # ============================================
 
@@ -486,18 +696,40 @@ def _make_audio(clean, path, cache=False):
 
 
 def _play_file(path):
-    """mp3 play karo aur khatam hone tak ruko; bolte waqt orb awaaz ke saath naachta hai."""
+    """mp3 play karo aur khatam hone tak ruko; bolte waqt orb awaaz ke saath naachta hai.
+    Return: True = poori awaaz boli, False = beech me rok di gayi (barge-in / Esc)."""
     # Awaaz ka "envelope" pehle se nikaal lo - har 50ms kitni tez hai (0..1)
     envelope = _loudness_envelope(path)
     pygame.mixer.music.load(path)
     pygame.mixer.music.play()
+    # Bolte waqt "stop" sunna shuru: mic khul gaya, par shuruaat ke warmup tak band
+    # (goonj abhi banti hai, Vosk ko nahi sunni chahiye)
+    barge_in.start()
+    stopped = False
     while pygame.mixer.music.get_busy():
+        if barge_in.triggers.is_set():
+            pygame.mixer.music.stop()
+            stopped = True
+            ui.log("Barge-in: rok diya gaya")
+            break
         if envelope:
             pos = pygame.mixer.music.get_pos() // ENVELOPE_MS      # Abhi kaunsa 50ms ka tukda
             ui.set_level(envelope[min(max(pos, 0), len(envelope) - 1)])
         pygame.time.wait(40)
     ui.set_level(0)                 # Bolna khatam - orb shaant
-    pygame.mixer.music.unload()     # File chhodo taaki agli baar overwrite ho sake
+    # Awaaz khatam hone ke baad 0.3s tak mic khula rahega par trigger NAHI hoga:
+    # speaker ki goonj utar rahi hoti hai, gate update hota rahega taaki wahi
+    # dobara trigger na karaye (iskar baad hi listening ka apna echo guard chalta hai)
+    barge_in.freeze()
+    deadline = time.time() + barge_in.echo_guard_ms / 1000.0
+    while not stopped and time.time() < deadline:
+        pygame.time.wait(30)
+    barge_in.stop()                 # Ab mic band (listening apna mic khud kholega)
+    try:
+        pygame.mixer.music.unload()     # File chhodo taaki agli baar overwrite ho sake
+    except pygame.error:
+        pass
+    return not stopped
 
 
 STREAM_MIN_CHARS = 140      # Isse chhota text ek saath (streaming ka faayda nahi)
@@ -526,13 +758,16 @@ def _split_for_streaming(text):
 
 
 def _speak_streaming(chunks, started):
-    """Chunks alag thread mein banate raho; jaise hi pehla ready ho bolna shuru, phir agle."""
+    """Chunks alag thread mein banate raho; jaise hi pehla ready ho bolna shuru, phir agle.
+    Return: True = sab bol diya, False = beech me rok diya gaya."""
     global last_tts_seconds
     ready = queue.Queue()
     tag = f"{os.getpid()}_{int(time.time())}"
 
     def producer():
         for i, chunk in enumerate(chunks):
+            if barge_in.triggers.is_set():
+                break                 # rok diya gaya - aage ki awaaz mat banao (credits bachein)
             ready.put(_make_audio(chunk, os.path.join(tempfile.gettempdir(), f"jarvis_speech_{tag}_{i}.mp3")))
         ready.put(None)
 
@@ -546,11 +781,13 @@ def _speak_streaming(chunks, started):
         if first:
             last_tts_seconds = time.time() - started      # Pehla tukda bolne se pehle kitna time laga
             first = False
-        _play_file(path)
+        if not _play_file(path):
+            return False                 # beech me ruka - aage kuch mat bolo
         try:
             os.remove(path)
         except OSError:
             pass
+    return True
     # Pehla hi tukda ban nahi paya (path None) to loop mein _play_file(None) na chale
     
 
@@ -559,23 +796,25 @@ def speak(text, cache=False, show=True, private=False):
     cache=True: fixed lines (jaise "Yes sir...") ek baar banake save ho jaati
     hain, agli baar se wahi file chalti hai - ElevenLabs ke characters bachte hain.
     show=False: UI chat mein mat daalo.
-    private=True: terminal mein text mat chhapo (jaise aaya hua WhatsApp message) - sirf awaaz + UI."""
+    private=True: terminal mein text mat chhapo (jaise aaya hua WhatsApp message) - sirf awaaz + UI.
+    Return: True = poori baat boli, False = beech me rok di gayi (barge-in / Esc / awaaz nahi bani)."""
     global last_tts_seconds
     print("JARVIS: [private - WhatsApp message, terminal mein nahi dikhaya]" if private else f"JARVIS: {text}")
     if show:
         ui.add_message("ai", text)     # UI chat mein JARVIS ki line
     started = time.time()     # Latency: awaaz banane mein kitna laga
+    barge_in.clear()          # Pichla trigger hatao (naya bolna shuru)
 
     # Gemini kabhi-kabhi *bold* ya # heading bhejta hai - bolne se pehle hatao
     # ("_" nahi hatate - "krrish_972" jaise username ka hissa ho sakta hai)
     clean = re.sub(r"[*#`]", "", text).strip()
     if not clean:
-        return
+        return False
 
     # Lamba text: pehla sentence pehle banao aur bolna shuru karo, baaki peeche banta rahe
     chunks = [clean] if cache else _split_for_streaming(clean)
     if len(chunks) > 1:
-        _speak_streaming(chunks, started)
+        finished = _speak_streaming(chunks, started)
     else:
         path = SPEECH_FILE
         if cache:
@@ -584,12 +823,16 @@ def speak(text, cache=False, show=True, private=False):
             path = os.path.join(CACHE_DIR, name + ".mp3")
         path = _make_audio(clean, path, cache)
         if not path:
-            return
+            return False
         last_tts_seconds = time.time() - started
-        _play_file(path)
+        finished = _play_file(path)
 
-    # Thoda ruko taaki speaker ki goonj khatam ho jaaye - warna mic JARVIS ki
-    # apni awaaz ko aapka bolna samajh ke record karna shuru kar deta hai
-    pygame.time.wait(POST_SPEECH_GAP_MS)
     global _need_beep
     _need_beep = True        # Agli listening shuru hone pe beep
+    if not finished:
+        return False
+    # Thoda ruko taaki speaker ki goonj khatam ho jaaye - warna mic JARVIS ki
+    # apni awaaz ko aapka bolna samajh ke record karna shuru kar deta hai
+    # (_play_file ne 0.3s ka goonj guard already de diya hai - double wait nahi)
+    pygame.time.wait(POST_SPEECH_GAP_MS)
+    return True
