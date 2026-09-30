@@ -340,6 +340,11 @@ check("groq schema: city required nahi", brain._SCHEMA_BY_NAME["get_weather"]["f
 check("groq schema: naye phone tools", brain._SCHEMA_BY_NAME["phone_tap_text"]["function"]["parameters"]["required"] == ["label"]
       and brain._SCHEMA_BY_NAME["phone_read_screen"]["function"]["parameters"]["required"] == []
       and brain._SCHEMA_BY_NAME["phone_enter"]["function"]["parameters"]["required"] == [])
+check("groq args: khaali optional param hat jaata hai",
+      brain.clean_args(tools.phone_status, {"": ""}) == {}
+      and brain.clean_args(tools.phone_read_screen, {"query": ""}) == {}
+      and brain.clean_args(tools.phone_read_screen, {"query": "search"}) == {"query": "search"}
+      and brain.clean_args(tools.phone_tap_text, {"label": ""}) == {"label": ""})
 
 print("\nFAILS:", fails)
 raise SystemExit(1 if fails else 0)

@@ -457,6 +457,17 @@ def groq_chat(**kwargs):
     raise last
 
 
+def clean_args(func, args):
+    """Model kabhi optional param (ya ek khaali key "") ke liye "" bhej deta hai - TypeError se pehle
+    hata do. Zaroori param ki khaali value waise hi rehti hai (AI ko error dikhna sahi hai)."""
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return dict(args)
+    return {k: v for k, v in args.items()
+            if not (v == "" and (k not in params or params[k].default is not inspect.Parameter.empty))}
+
+
 def _ask_groq(message, note=""):
     """Groq se poochho. Groq sirf batata hai kaunsa tool chahiye -
     tool hum khud chalate hain aur result wapas Groq ko dete hain (loop)."""
@@ -496,7 +507,7 @@ def _ask_groq(message, note=""):
                 result = f"Error: unknown tool {call.function.name}"
             else:
                 try:
-                    args = json.loads(call.function.arguments or "{}")
+                    args = clean_args(func, json.loads(call.function.arguments or "{}"))
                     key = (call.function.name, json.dumps(args, sort_keys=True))
                     if key not in ran:
                         ran[key] = func(**args)   # Tool khud try/except, DRY_RUN, confirm sambhalta hai
