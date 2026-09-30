@@ -1018,6 +1018,205 @@ def reminder_snooze(minutes: int = 10) -> str:
 
 
 # ============================================
+# 9e. CONTENT CREATOR PACK - caption, hashtags, reel script, YouTube title/description, hooks
+#   Likhne ka kaam brain.generate_text() karta hai (Gemini pehle, phir Groq - model .env se).
+#   Chhota jawab bolte hain; lamba (script/description/hashtags) poora HUD mein, bolne mein
+#   sirf pehli line. "copy kar do" = aakhri jawab clipboard mein (confirm ke baad).
+# ============================================
+CONTENT_WORDS = {"caption", "captions", "script", "hashtag", "hashtags", "title", "description",
+                 "hook", "hooks", "likho", "likh", "do", "suggest", "idea", "ideas", "batao", "banao"}
+COPY_WORDS = {"copy", "clipboard"}
+CONTENT_KINDS = {
+    "caption": ("Instagram/Reels caption", "Write 3 different caption options. Each 1-2 short lines, "
+                "catchy, with 1-2 fitting emojis. Number them 1., 2., 3."),
+    "hashtags": ("hashtags", "Write {n} relevant hashtags (mix of popular and niche), all on ONE line "
+                 "separated by spaces, each starting with #. Nothing else."),
+    "reel_script": ("Reels/Shorts script", "Write a {sec}-second spoken script: first line = a strong hook, "
+                    "then short lines Krish can speak, last line = a call to action. One line per beat, "
+                    "about {words} words in total. No stage directions in brackets."),
+    "youtube_title": ("YouTube title", "Write 3 different title options, each under 70 characters, "
+                      "curiosity-driven but honest, no clickbait lies. Number them 1., 2., 3."),
+    "youtube_description": ("YouTube description", "Write one description: 2-3 short lines about the "
+                            "video, then a line asking to like/subscribe, then 3-5 hashtags."),
+    "hook_ideas": ("video hooks", "Write 3 different opening hook lines (first 3 seconds of the video), "
+                   "each one short and punchy. Number them 1., 2., 3."),
+}
+_LONG_KINDS = {"reel_script", "youtube_description", "hashtags"}
+last_content = ""      # Aakhri likha hua poora jawab (RAM) - "copy kar do" isi ko copy karta hai
+
+
+def _content_style():
+    """memory.json se Krish ki content style ('meri style casual rakhna') - na ho to ''."""
+    try:
+        import memory
+        facts = [f for f in memory.all_facts() if "style" in f.lower()]
+    except Exception:
+        return ""
+    return " ".join(facts)
+
+
+@tool("Writing {kind}...", needs=CONTENT_WORDS)
+def content_help(kind: str, topic: str) -> str:
+    """Write content for Krish's social media. kind = one of: caption, hashtags, reel_script,
+    youtube_title, youtube_description, hook_ideas. topic = what the content is about (e.g. 'Diwali reel',
+    'Python JARVIS project'). Use when Krish asks for a caption, hashtags, reel script, YouTube title or
+    description, or hook ideas. The answer is shown/spoken to Krish directly, do not repeat it."""
+    global last_content
+    import brain
+    key = str(kind or "").strip().lower().replace(" ", "_")
+    key = {"hashtag": "hashtags", "script": "reel_script", "title": "youtube_title",
+           "description": "youtube_description", "hooks": "hook_ideas", "hook": "hook_ideas"}.get(key, key)
+    if key not in CONTENT_KINDS:
+        return f"Could not write content: kind must be one of {', '.join(CONTENT_KINDS)}."
+    topic = " ".join(str(topic or "").split())
+    if not topic:
+        return "Could not write content: the topic is empty, ask Krish what it is about."
+
+    req = current_request.lower()
+    english = "english" in req or "अंग्रेज" in req
+    m = re.search(r"(\d{1,3})\s*(?:second|sec|s\b)", req)
+    seconds = min(int(m[1]), 180) if m else 30
+    m = re.search(r"(\d{1,2})\s*hashtag", req)
+    count = min(int(m[1]), 30) if m else 10
+    label, rule = CONTENT_KINDS[key]
+    rule = rule.format(n=count, sec=seconds, words=int(seconds * 2.5))
+    style = _content_style()
+    prompt = (f"You are a social media content writer for Krish, an Indian tech creator.\n"
+              f"Task: {label} about: {topic}\n{rule}\n"
+              f"Language: {'English' if english else 'Roman Hinglish (Hindi written in English letters, never Devanagari)'}.\n"
+              + (f"Krish's style notes: {style}\n" if style else "")
+              + "Plain text only: no markdown, no ** or #-headings, no intro or explanation, just the content.")
+    text = brain.generate_text(prompt)
+    if not text:
+        return "Error: could not write the content right now (AI not answering). Try again in a minute."
+    # Har line saaf karo (hashtag wali line nahi: _tidy line ke shuru ka # hata deta hai)
+    text = "\n".join(line.strip() if not line.strip() or line.lstrip().startswith("#") else brain._tidy(line)
+                     for line in text.strip().splitlines()).strip()
+    last_content = text
+
+    lines = [l for l in text.splitlines() if l.strip()]
+    if key in _LONG_KINDS or len(text) > 350:
+        ui.add_message("ai", text)                  # Poora text HUD mein
+        first = lines[0] if key != "hashtags" else " ".join(lines[0].split()[:3])
+        raise DirectReply(f"{first} ... baaki screen pe hai, sir. 'Copy kar do' bolo to clipboard mein daal dunga.")
+    raise DirectReply(text + "\nCopy chahiye to 'copy kar do' boliye.")
+
+
+def _set_clipboard(text):
+    """Windows clipboard mein text (ctypes se, koi library nahi). True = ho gaya."""
+    import ctypes
+    from ctypes import wintypes
+    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32
+    k32.GlobalAlloc.restype = wintypes.HGLOBAL
+    k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    data = (text + "\0").encode("utf-16-le")
+    for _ in range(10):                       # Clipboard kabhi kisi aur ke paas hota hai - thoda ruk ke phir try
+        if u32.OpenClipboard(None):
+            break
+        time.sleep(0.1)
+    else:
+        return False
+    try:
+        u32.EmptyClipboard()
+        handle = k32.GlobalAlloc(0x0002, len(data))          # GMEM_MOVEABLE
+        if not handle:
+            return False
+        ptr = k32.GlobalLock(handle)
+        ctypes.memmove(ptr, data, len(data))
+        k32.GlobalUnlock(handle)
+        return bool(u32.SetClipboardData(13, handle))        # CF_UNICODETEXT (ab clipboard ka maalik)
+    finally:
+        u32.CloseClipboard()
+
+
+def _get_clipboard():
+    """Clipboard ka text (test mein purana wapas rakhne ke liye). Na ho to None."""
+    import ctypes
+    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32
+    u32.GetClipboardData.restype = ctypes.c_void_p
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [ctypes.c_void_p]
+    k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    if not u32.OpenClipboard(None):
+        return None
+    try:
+        h = u32.GetClipboardData(13)
+        if not h:
+            return None
+        p = k32.GlobalLock(h)
+        try:
+            return ctypes.wstring_at(p)
+        finally:
+            k32.GlobalUnlock(h)
+    finally:
+        u32.CloseClipboard()
+
+
+@tool("Copying to clipboard...", needs=COPY_WORDS)
+def copy_last_content() -> str:
+    """Copy the last content written by content_help (caption, script, hashtags...) to the Windows
+    clipboard. Use only when Krish says 'copy kar do'. Asks Krish to confirm first."""
+    if not last_content:
+        raise DirectReply("Sir, abhi copy karne ke liye kuch likha hi nahi hai.", ok=False)
+    if not confirm("Sir, clipboard mein copy kar doon?"):
+        raise DirectReply("Theek hai sir, copy nahi kiya.")
+    if DRY_RUN:
+        _dry_run(f"copy {len(last_content)} characters to clipboard")
+        raise DirectReply("Test mode hai sir, isliye clipboard mein sach mein copy nahi hua.")
+    if not _set_clipboard(last_content):
+        return "Error: clipboard busy or not available, could not copy."
+    raise DirectReply("Copy ho gaya, sir. Ab paste kar sakte hain.")
+
+
+# --- Video editors: CapCut / DaVinci Resolve / Premiere Pro (jo installed ho) ---
+_EDITORS = {
+    "capcut": ("CapCut", ["%LOCALAPPDATA%\\CapCut\\Apps\\CapCut.exe", "%LOCALAPPDATA%\\CapCut\\Apps\\*\\CapCut.exe",
+                          "%PROGRAMFILES%\\CapCut\\CapCut.exe"], "capcut"),
+    "davinci": ("DaVinci Resolve", ["%PROGRAMFILES%\\Blackmagic Design\\DaVinci Resolve\\Resolve.exe"], "resolve"),   # "DaVinci Control Panels" jaisa nahi
+    "premiere": ("Premiere Pro", ["%PROGRAMFILES%\\Adobe\\Adobe Premiere Pro *\\Adobe Premiere Pro.exe"], "premiere"),
+}
+
+
+def _find_editor(key):
+    """Editor ka rasta: pehle jaani-pehchani jagah, phir Start Menu ke shortcut. Na mile to None."""
+    import glob
+    _, paths, word = _EDITORS[key]
+    for pattern in paths:
+        found = sorted(glob.glob(os.path.expandvars(pattern)))
+        if found:
+            return found[-1]
+    for base in (os.path.expandvars("%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs"),
+                 os.path.expandvars("%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs")):
+        for root, _, files in os.walk(base):
+            for f in files:
+                if f.lower().endswith(".lnk") and word in f.lower():
+                    return os.path.join(root, f)
+    return None
+
+
+@tool("Opening video editor: {name}...", needs=OPEN_WORDS)
+def open_editor(name: str) -> str:
+    """Open a video editor: 'capcut', 'davinci' (DaVinci Resolve) or 'premiere' (Premiere Pro),
+    only if it is installed. Use for 'CapCut kholo', 'DaVinci kholo', 'Premiere kholo'."""
+    key = str(name or "").lower()
+    key = "davinci" if "vinci" in key else "premiere" if "premiere" in key else "capcut" if "cap" in key else key
+    if key not in _EDITORS:
+        return "Could not open: editor must be capcut, davinci or premiere."
+    label = _EDITORS[key][0]
+    path = _find_editor(key)
+    if not path:
+        raise DirectReply(f"Sir, {label} is PC pe install nahi hai.", ok=False)
+    if DRY_RUN:
+        return _dry_run(f"open {label}")
+    os.startfile(path)
+    return f"Opened {label}"
+
+
+# ============================================
 # 10. PC LOCK
 # ============================================
 @tool("Locking PC...", needs=LOCK_WORDS)
@@ -1368,6 +1567,7 @@ ALL_TOOLS = [
     media_control, brightness, find_files, open_file,
     note_add, notes_list, note_delete,
     reminder_add, task_list, task_delete, tasks_clear, reminder_snooze,
+    content_help, copy_last_content, open_editor,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen,
     send_whatsapp, whatsapp_call, end_call, read_messages,

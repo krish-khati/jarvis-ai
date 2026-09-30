@@ -828,7 +828,8 @@ def speak(text, cache=False, show=True, private=False):
 
     # Gemini kabhi-kabhi *bold* ya # heading bhejta hai - bolne se pehle hatao
     # ("_" nahi hatate - "krrish_972" jaise username ka hissa ho sakta hai)
-    clean = re.sub(r"[*#`]", "", text).strip()
+    clean = re.sub(r"[*#`]", "", text)
+    clean = re.sub("[\U0001F000-\U0001FAFF☀-➿️‍]", "", clean).strip()   # Emoji bola nahi jaata
     if not clean:
         return False
 

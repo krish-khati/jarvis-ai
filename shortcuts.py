@@ -501,6 +501,74 @@ def _tasks_command(command, text, hi):
     return None
 
 
+# ============================================
+# Content creator: "Instagram caption do: Diwali reel", "10 hashtags do: coding", "copy kar do",
+#   "meri style casual rakhna", "CapCut kholo". Sawaal ("caption ka matlab kya hai") AI ke paas jaate hain.
+#   Topic ke liye asli command use hota hai (bade-chhote akshar waise hi rahein).
+# ============================================
+_C_KW = re.compile(r"\b(captions?|hashtags?|script|title|description|hooks?)\b", re.I)
+_C_VERB = re.compile(r"\b(?:do|dena|de do|de|likho|likh do|likhna|suggest(?: karo| kar do)?|batao|"
+                     r"bana do|banao|chahiye|dijiye)\b", re.I)
+_C_QUESTION = re.compile(r"\b(kya|kaun|kab|kaise|kyun|kyu|matlab|meaning|what|why|how|hota|hoti|hote|"
+                         r"difference|farak|kitna|kitne)\b", re.I)
+_C_KIND = {"caption": "caption", "captions": "caption", "hashtag": "hashtags", "hashtags": "hashtags",
+           "script": "reel_script", "title": "youtube_title", "description": "youtube_description",
+           "hook": "hook_ideas", "hooks": "hook_ideas"}
+_C_NOISE = [re.compile(p, re.I) for p in (
+    r"\b\d+\s*(?:second|sec|s)\b(?:\s*(?:ka|ki|ke))?",              # "30 second ka"
+    r"\b\d+\s*hashtags?\b",                                          # "10 hashtags"
+    r"\b(?:instagram|insta|youtube|yt|reel|reels|video|is|iss|ye|yeh|ek|mujhe|mere|meri|mera)\s+(?:ka|ki|ke)\b",
+    r"\b(?:ke liye|ke lie|please|plz|zara|jarvis)\b")]
+STYLE_CMD = re.compile(r"(?:meri|mera|apni) (?:content )?style (?P<s>.+?) (?:rakhna|rakho|rakhiye|rakh do|rakhe)")
+COPY_CMD = re.compile(r"(?:isko |ise |ye |yeh |isse )?(?:clipboard mein )?copy (?:kar do|karo|kar de|kar dena)"
+                      r"|copy (?:this|that|it)|clipboard mein (?:daal do|copy karo)")
+_ED = r"(?:capcut|cap cut|davinci resolve|davinci|da vinci resolve|da vinci|premiere pro|premiere|adobe premiere pro|adobe premiere)"
+EDITOR_CMD = re.compile(rf"(?P<e>{_ED}) (?:kholo|khol do|khol de|open karo|open kar do|chalao|start karo)"
+                        rf"|open (?P<e2>{_ED})")
+
+
+def _content_topic(raw, kw):
+    """Command se topic nikaalo: colon ke baad ka hissa, warna keyword/verb/faltu shabd hata ke."""
+    if ":" in raw:
+        return raw.split(":", 1)[1].strip()
+    topic = raw
+    for rx in _C_NOISE:
+        topic = rx.sub(" ", topic)
+    topic = _C_KW.sub(" ", topic)
+    topic = _C_VERB.sub(" ", topic)
+    words = [w for w in topic.split() if w.lower() not in {"ka", "ki", "ke", "ko", "ek", "aur", "instagram",
+                                                            "insta", "youtube", "yt"}]
+    while words and words[0].lower() in {"is", "iss", "ye", "yeh"}:
+        words.pop(0)              # "is video ka ..." ka bacha "is"
+    return " ".join(words).strip(" :,-")
+
+
+def _content_command(command, text, hi):
+    """Content pack (bina AI): style save, copy, editors, caption/hashtags/script/title/... likhwana.
+    Jawab (text) ya None (AI ke paas jaao)."""
+    m = STYLE_CMD.fullmatch(text)
+    if m:
+        result = tools.save_memory(f"Krish ki content style: {m['s']}")
+        return (f"Theek hai sir, aapki content style '{m['s']}' yaad rakh li." if not result.startswith("Error")
+                else f"Sorry sir, {result}")
+    if COPY_CMD.fullmatch(text):
+        return f"Sorry sir, {tools.copy_last_content()}"
+    m = EDITOR_CMD.fullmatch(text)
+    if m:
+        result = tools.open_editor(m["e"] or m["e2"])      # Install na ho to DirectReply "install nahi hai"
+        return _tool_reply(result, hi, "Editor khol diya, sir.", "Opened the editor, sir.")
+
+    raw = re.sub(r"^\s*(?:hey\s+)?(?:jarvis|jervis)[\s,]+", "", command or "", flags=re.I).strip()
+    kw = _C_KW.search(raw)
+    if not kw or not _C_VERB.search(raw) or _C_QUESTION.search(raw):
+        return None
+    topic = _content_topic(raw, kw)
+    if len(topic.split()) < 1 or len(topic) < 2:
+        return None                      # Topic nahi bataya - AI poochega
+    result = tools.content_help(_C_KIND[kw[1].lower()], topic)
+    return f"Sorry sir, {result}"        # Sahi chale to DirectReply uthta hai
+
+
 def _media_command(text, hi):
     """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
     # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
@@ -635,6 +703,10 @@ def handle(command):
 
     # --- Media keys / volume relative / brightness (app/website se PEHLE, warna "chalu karo"
     #     wali commands galat jagah chali jaati hain) ---
+    reply = _content_command(command, text, hi)    # Content pack: caption, script, copy, editors
+    if reply:
+        return reply
+
     reply = _notes_command(command, text, hi)      # Notes: text asli command se (lowercase nahi)
     if reply:
         return reply

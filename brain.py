@@ -222,6 +222,34 @@ def rewrite_message(message, instruction):
     return message
 
 
+def generate_text(prompt):
+    """Ek baar ka text likhwao (content_help jaise kaam): Gemini pehle (model .env se, cooldown ke saath),
+    phir Groq. Koi tool nahi, history nahi. Dono na chalen to None."""
+    try:
+        if gemini_available():
+            model = gemini_model()
+            try:
+                r = gemini_client.models.generate_content(model=model, contents=prompt)
+            except Exception as e:
+                _model_failed(model, getattr(e, "code", None))
+                raise
+            if r.text:
+                return r.text.strip()
+    except Exception:
+        pass
+    try:
+        if groq_client:
+            r = groq_client.chat.completions.create(
+                model=GROQ_MODEL, messages=[{"role": "user", "content": prompt}],
+                reasoning_effort=GROQ_REASONING_EFFORT, include_reasoning=False)
+            text = r.choices[0].message.content
+            if text:
+                return text.strip()
+    except Exception as e:
+        print(f"  (Content AI error: {str(e)[:80]})")
+    return None
+
+
 # --- Step 3: Shared conversation history ---
 # Har baat yahan simple format mein save hoti hai:
 #   {"role": "user", "text": "..."}  ya  {"role": "assistant", "text": "..."}
