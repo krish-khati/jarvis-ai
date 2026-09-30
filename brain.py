@@ -705,6 +705,18 @@ def _answer(message):
         _remember(message, reply)
         return reply
 
+    # --- 1b. Multi-step / "agar ... to ..." goal? Agent (plan + loop, har tool call permissions.py se) ---
+    import agent
+    if not agent.running and agent.should_run(message):
+        tools.call_log.clear()
+        last_brain = "agent"
+        reply = agent.run(message)
+        if reply:
+            ui.log("Brain: agent")
+            _remember(message, reply)
+            return reply
+        ui.log("Agent plan nahi bana -> normal AI")     # Plan na bane to purana raasta
+
     # --- 2. Gemini (main brain) ---
     tools.call_log.clear()       # Is sawaal mein kaunse tools chale, yahan jama honge
     if gemini_available():

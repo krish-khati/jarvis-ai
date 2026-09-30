@@ -25,6 +25,7 @@ if sys.stderr is None:
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import brain    # Gemini (dimaag)
+import agent          # Multi-step goal (plan + loop)
 import speaker        # Sirf Krish ki awaaz (enrollment / verify)
 import scheduler      # Reminders / tasks (tasks.json + background thread)
 import notifications  # WhatsApp ke aaye messages (Windows notifications, sirf RAM mein)
@@ -474,6 +475,11 @@ def voice_loop():
     tools.confirm = tools.timed_wait(voice_confirm)
     tools.ask_user = tools.timed_wait(voice_ask)
     tools.read_out = voice_read_out
+    # Agent chalte waqt "stop / cancel" sunna (barge-in jaisa mic listener; confirm ke waqt band)
+    watcher = voice.BargeIn(words=[w.strip() for w in os.getenv("AGENT_CANCEL_WORDS", "stop, cancel, wait, enough").split(",")
+                                   if w.strip()])
+    agent.hooks["watch"] = lambda on: (watcher.clear(), voice.barge_in.clear(), watcher.start()) if on else watcher.stop()
+    agent.hooks["cancelled"] = lambda: watcher.triggers.is_set() or voice.barge_in.triggers.is_set()
     scheduler.hooks["sleep"] = notify_sleeping
     scheduler.start()             # Ek background thread, har 20s mein tasks.json dekhta hai
     if notifications.status() == "not started":
@@ -519,6 +525,9 @@ class Api:
         text = (text or "").strip()
         if not text:
             return ""
+        if agent.running and agent.is_cancel_text(text):      # Agent chal raha ho to "cancel/stop/ruk jao" turant (lock ke bina)
+            agent.cancel()
+            return "Theek hai sir, ruk raha hoon."
         print(f"Krish (typed): {tools.mask_private(text)}")
         with brain_lock:
             # Type karke poocha hai to "Sir, pakka?" bhi screen pe poocho, bol ke nahi
@@ -539,6 +548,7 @@ class Api:
     def hide(self):
         """Esc dabane pe bolna rok do aur window chhupao (background mein chalta rahe)."""
         voice.stop_speaking()
+        agent.cancel()          # Esc: chalta hua agent goal bhi ruke
         ui.hide_window()
 
     def enroll(self):
@@ -547,8 +557,9 @@ class Api:
         return "ok"
 
     def stop(self):
-        """HUD ke STOP button / Esc: sirf bolna rok do (window khuli rahe)."""
+        """HUD ke STOP button / Esc: sirf bolna rok do (window khuli rahe); agent chal raha ho to wo bhi."""
         voice.stop_speaking()
+        agent.cancel()
 
 
 def ui_prompt(question):

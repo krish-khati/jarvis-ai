@@ -98,6 +98,9 @@ def ask_user(question):
     return None
 
 
+agent_capture = False     # agent.py chalte waqt True: read_screen/read_webpage/read_clipboard text bolne ki jagah agent ko dete hain
+
+
 def read_out(text):
     """Text ko bolo (main.py isko asli awaaz se badalta hai). True = poora bola, False = "stop" se ruka.
     Default (text mode): sirf HUD/log mein dikhao."""
@@ -1600,6 +1603,9 @@ def _read_aloud(text):
     global private_reply
     import readaloud
     private_reply = True
+    if agent_capture:
+        # Agent mode: text bolna nahi, DATA ki tarah agent ko do (permissions.Guard UNTRUSTED label lagata hai)
+        raise DirectReply(readaloud.cut(text))
     parts = readaloud.groups(text)
     if not parts:
         raise DirectReply("Sir, padhne layak text nahi mila.", ok=False)

@@ -51,7 +51,12 @@ UNTRUSTED_SOURCES = {
     "explain_clipboard": "clipboard", "find_files": "file names", "git_log": "git commit titles",
     "git_status": "git file names", "notes_list": "notes",
 }
-INCOMING_MESSAGE_TOOLS = {"read_messages"}        # Iske baad us goal mein koi action nahi
+# Inke result (message / web page / screen) ke baad us goal mein koi CONFIRM/NEVER kaam nahi: sirf padhke sunana
+INCOMING_MESSAGE_TOOLS = {"read_messages", "read_webpage", "read_screen"}
+# CONFIRM tools jo APNA confirm khud poochte hain (chat header/message dikhake). Inpe layer dobara nahi poochti:
+# ek kaam = ek hi confirm. Baaki CONFIRM tool (delete_memory: sirf "all" pe apna confirm) pe layer poochti hai.
+SELF_CONFIRMING = {"send_whatsapp", "whatsapp_call", "save_memory", "close_app", "note_delete", "reminder_add",
+                   "task_delete", "tasks_clear", "copy_last_content", "read_clipboard", "explain_clipboard"}
 
 NEVER_LINE = "Ye main khud nahi karunga, sir. Aap seedha bolo."
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "agent.log")
@@ -117,14 +122,15 @@ class Guard:
             return "block", level, "NEVER tool" if name in RISK else "anjaan tool (default deny)"
         if level == CONFIRM and self.read_incoming:
             return "block", level, "aaye message padhne ke baad koi action nahi"
-        return ("ask" if level == CONFIRM else "run"), level, ""
+        return ("ask" if (level == CONFIRM and name not in SELF_CONFIRMING) else "run"), level, ""
 
     def run(self, name, **args):
         decision, level, reason = self.check(name)
         if decision == "block":
             log(name, level, "deny", reason)
             if self.read_incoming and level == CONFIRM:
-                return "blocked", "Sir, aaye hue message ke basis pe main kuch nahi karunga, sirf padh ke sunata hoon."
+                return "blocked", ("Sir, padhe hue message/page/screen ke basis pe main koi kaam nahi karunga, "
+                                   "sirf padh ke sunata hoon.")
             return "blocked", NEVER_LINE
         if decision == "ask":
             if not self._ask(self._question(name)):
@@ -146,10 +152,13 @@ class Guard:
             result = d.reply
             if name in UNTRUSTED_SOURCES and d.ok:
                 result = wrap_untrusted(result, UNTRUSTED_SOURCES[name])
+            elif level == CONFIRM:
+                # Tool ne seedha jawab diya (cancel / kaam hua ya nahi): AI ko sahi padhna hai, maan mat lena ki ho gaya
+                result = f"TOOL REPLY (the action may NOT have happened, read carefully): {result}"
             return ("ok" if d.ok else "error"), result
         except Exception as e:
             return "error", f"Error while running {name}: {e}"
-        if name in UNTRUSTED_SOURCES:
+        failed = str(result).startswith(("Error", "BLOCKED", "Could not"))     # Label lagne se PEHLE dekho
+        if name in UNTRUSTED_SOURCES and not failed:
             result = wrap_untrusted(result, UNTRUSTED_SOURCES[name])
-        failed = str(result).startswith(("Error", "BLOCKED", "Could not"))
         return ("error" if failed else "ok"), result
