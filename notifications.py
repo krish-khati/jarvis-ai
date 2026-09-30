@@ -121,6 +121,12 @@ def count_new():
         return sum(1 for i in _items if not i["announced"])
 
 
+def count_unread():
+    """Bina padhe messages ki sirf ginti (kuch mark/consume nahi hota, text nahi) - morning briefing ke liye."""
+    with _lock:
+        return sum(1 for i in _items if not i["read"])
+
+
 def unread(n=5):
     """Aakhri n bina padhe messages (purane se naya) - aur unhe 'read' mark karo."""
     with _lock:

@@ -167,6 +167,17 @@ def announce_missed():
                 private=True)        # Reminder ka text terminal mein nahi
 
 
+def announce_briefing():
+    """Morning briefing ka time aa chuka ho (awake mein seedha, sleep mein aaya ho to jagne pe) to bolo.
+    Ek hi baar; text template se (AI nahi), reminders ka text terminal mein nahi."""
+    if not scheduler.pop_briefing():
+        return
+    ui.set_state("speaking")
+    text = tools.briefing_text()
+    ui.add_message("ai", text)
+    voice.speak(text, private=True)
+
+
 _RISKY_REMINDER = re.compile(r"whatsapp|message|msg|call|bhej|send|shutdown|restart|lock|band|close|delete|hata",
                              re.IGNORECASE)
 
@@ -199,6 +210,12 @@ def notify_sleeping(task):
     window fullscreen nahi hoti."""
     voice.chime()
     ui.notify("Reminder: " + task["what"])
+
+
+def notify_briefing():
+    """Sleep mein briefing ka time: halka chime + notification. Poori briefing "Hey Jarvis" bolne pe."""
+    voice.chime()
+    ui.notify("Good morning sir - briefing ready hai, 'Hey Jarvis' boliye")
 
 
 def voice_confirm(question):
@@ -342,6 +359,7 @@ def active_mode():
     voice.speak(WAKE_LINE, cache=True)
     announce_messages(on_wake=True)   # Sleep mein aaye messages: "Sir, 3 naye messages hain"
     announce_missed()                 # Chhoote reminders: "Sir, 2 reminders miss ho gaye the"
+    announce_briefing()               # Sleep mein briefing ka time nikla ho to ab poori briefing
 
     last_heard = time.time()     # Aakhri baar kab kuch samajh aaya (auto-sleep ke liye)
     voice.speaker_strict = True  # Wake ke baad pehli command pe sakht speaker check; phir 20 s follow-up naram
@@ -350,6 +368,7 @@ def active_mode():
     while True:
         announce_messages()      # Jaagte hue naya message aaya ho to batao (reply nahi)
         announce_reminders()     # Reminder ka time aaya ho to bolo
+        announce_briefing()      # Jaagte hue BRIEFING_TIME aaya ho to briefing bolo
         if speaker.enroll_requested.is_set():          # HUD ka "Awaaz dobara yaad karo" button
             speaker.enroll_requested.clear()
             enroll_voice()
@@ -481,6 +500,7 @@ def voice_loop():
     agent.hooks["watch"] = lambda on: (watcher.clear(), voice.barge_in.clear(), watcher.start()) if on else watcher.stop()
     agent.hooks["cancelled"] = lambda: watcher.triggers.is_set() or voice.barge_in.triggers.is_set()
     scheduler.hooks["sleep"] = notify_sleeping
+    scheduler.hooks["briefing"] = notify_briefing
     scheduler.start()             # Ek background thread, har 20s mein tasks.json dekhta hai
     if notifications.status() == "not started":
         notifications.start()     # WhatsApp notifications padhna (sirf RAM mein)

@@ -526,6 +526,16 @@ _G_QUESTION = re.compile(r"\b(?:kya|kaun|kab|kaise|kyun|kyu|matlab|meaning|what|
                          r"difference|farak|karte|karta|karti|karein|samjhao|samjha|sikhao|explain)\b")
 
 
+# ============================================
+# Morning briefing: "good morning", "morning briefing do", "aaj ka plan batao" (fullmatch, bina AI)
+# ============================================
+BRIEFING_CMD = re.compile(r"(?:good morning|gud morning|suprabhat)(?: jarvis| sir)?|"
+                          r"(?:meri |mera |aaj ki |aaj ka )?(?:morning )?briefing"
+                          r"(?: do| dijiye| dedo| de do| sunao| batao| bata do| suna do| chalao| shuru karo)?|"
+                          r"(?:aaj ka|aaj ki|mera|meri) (?:plan|schedule|agenda)"
+                          r"(?: kya hai| batao| bata do| dikhao| sunao)?")
+
+
 def _dev_command(command, text, hi):
     """Dev helper (bina AI). Jawab (text) ya None. Write git commands ko NEVER-level 'nahi' deta hai."""
     if not _G_QUESTION.search(text) and (
@@ -734,6 +744,10 @@ def handle(command):
     reply = _read_command(command, text)          # Padh ke sunao (screen / page link / clipboard)
     if reply:
         return reply
+
+    # --- Morning briefing (template, bina AI; DirectReply seedha jawab) ---
+    if BRIEFING_CMD.fullmatch(text):
+        return f"Sorry sir, briefing nahi bana paya. {tools.morning_briefing()}"
 
     # --- Screen: "screen pe kya hai" -> seedha look_at_screen (jawab DirectReply se aata hai) ---
     if SCREEN_ASK.fullmatch(text):

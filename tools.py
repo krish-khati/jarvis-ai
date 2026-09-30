@@ -1079,6 +1079,91 @@ def reminder_snooze(minutes: int = 10) -> str:
 
 
 # ============================================
+# 9e. MORNING BRIEFING - "good morning", "morning briefing do", "aaj ka plan batao"
+#   Template se banta hai (koi AI call nahi). Tareekh/din/time, mausam (.env BRIEFING_CITY), aaj ke
+#   reminders, notes ki ginti, naye WhatsApp messages ki SIRF ginti (text kabhi nahi). Jo data na mile
+#   (internet nahi, city khali) use chhod dete hain. Reminder ka text private (terminal mein nahi).
+# ============================================
+BRIEFING_WORDS = {"briefing", "morning", "plan"}
+BRIEFING_WEATHER_SECONDS = 6      # Internet atke to itne second baad mausam chhod do
+
+
+def _briefing_weather(city):
+    """Mausam ka ek chhota sentence, ya None (city khali / internet nahi / der lagi)."""
+    global last_weather
+    if not city:
+        return None
+    last_weather = None
+    def _fetch():
+        try:
+            get_weather(city)
+        except Exception:
+            pass                   # Internet nahi = mausam chhod do
+
+    t = _threading.Thread(target=_fetch, daemon=True)
+    t.start()
+    t.join(BRIEFING_WEATHER_SECONDS)
+    w = last_weather
+    if t.is_alive() or not w:
+        return None
+    rain = f", baarish ka chance {w['rain']} percent" if w["rain"] >= 30 else ""
+    return f"{w['city']} mein abhi {w['temp']} degree hai, {w['desc']}, aaj {w['min']} se {w['max']}{rain}."
+
+
+def briefing_text(now=None):
+    """Morning briefing ka bolne layak text (4-5 chhote sentence). Kuch bhi fail ho to us hisse ko chhod do."""
+    import scheduler
+    now = now or datetime.datetime.now()
+    hello = "Good morning" if now.hour < 12 else "Good afternoon" if now.hour < 17 else "Good evening"
+    parts = [f"{hello} sir. Aaj {now.strftime('%A')}, {now.day} {now.strftime('%B')} hai, "
+             f"abhi {now.strftime('%I:%M %p').lstrip('0')} ho rahe hain."]
+    try:
+        line = _briefing_weather(os.getenv("BRIEFING_CITY", "").strip())
+        if line:
+            parts.append(line)
+    except Exception:
+        pass
+    try:
+        today = [t for t in scheduler.all_tasks()
+                 if datetime.datetime.fromisoformat(t["when"]).date() == now.date()]
+        if today:
+            names = "; ".join(t["what"] for t in today[:2])
+            parts.append(f"Aaj {len(today)} reminder{'s hain' if len(today) > 1 else ' hai'}: {names}"
+                         + (" aur baaki." if len(today) > 2 else "."))
+        else:
+            parts.append("Aaj koi reminder nahi hai.")
+    except Exception:
+        pass
+    tail = []
+    try:
+        notes = len(_notes_load())
+        if notes:
+            tail.append(f"{notes} notes save hain")
+    except Exception:
+        pass
+    try:
+        import notifications
+        unread = notifications.count_unread()
+        if unread:
+            tail.append(f"{unread} naye WhatsApp messages hain")
+    except Exception:
+        pass
+    if tail:
+        parts.append("Aur " + ", ".join(tail) + ".")
+    return " ".join(parts)
+
+
+@tool("Preparing briefing...", needs=BRIEFING_WORDS)
+def morning_briefing() -> str:
+    """Give Krish his morning briefing: date, day, time, weather, today's reminders, notes count and the
+    NUMBER of new WhatsApp messages (never their text). Use for 'good morning', 'morning briefing do',
+    'aaj ka plan batao'."""
+    global private_reply
+    private_reply = True       # Reminder ka text terminal mein nahi dikhega
+    raise DirectReply(briefing_text())
+
+
+# ============================================
 # 9e. CONTENT CREATOR PACK - caption, hashtags, reel script, YouTube title/description, hooks
 #   Likhne ka kaam brain.generate_text() karta hai (Gemini pehle, phir Groq - model .env se).
 #   Chhota jawab bolte hain; lamba (script/description/hashtags) poora HUD mein, bolne mein
@@ -1854,6 +1939,7 @@ ALL_TOOLS = [
     note_add, notes_list, note_delete,
     reminder_add, task_list, task_delete, tasks_clear, reminder_snooze,
     content_help, copy_last_content, open_editor,
+    morning_briefing,
     lock_pc, shutdown_pc, restart_pc,
     save_memory, delete_memory, look_at_screen, read_screen, read_webpage, read_clipboard,
     explain_clipboard, git_status, git_log,

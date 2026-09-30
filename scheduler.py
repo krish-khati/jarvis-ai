@@ -20,10 +20,13 @@ CHECK_SECONDS = 20        # Itne second mein ek baar tasks dekho
 LATE_LIMIT = 600          # Time se itna (10 min) zyada late ho gaya to "miss ho gaya" (PC band tha)
 
 awake = False             # main.py set karta hai: JARVIS abhi jaag raha hai?
-hooks = {"sleep": None}   # sleep mein reminder aaye to: hooks["sleep"](task)
+hooks = {"sleep": None, "briefing": None}   # sleep mein reminder: hooks["sleep"](task); briefing: hooks["briefing"]()
 due = []                  # Awake mein aaye tasks - main.py ki voice thread inhe bolti hai
 missed = []               # Band/sleep-PC ke dauran chhoot gaye reminders (jagne pe batate hain)
 last_fired = None         # Aakhri baja hua reminder ("snooze" isi ka hota hai)
+briefing_pending = False  # Morning briefing ka time aa chuka, abhi boli nahi gayi (main.py bolta hai)
+BRIEFING_GRACE = 3 * 3600  # BRIEFING_TIME se itna (3 ghante) zyada late start ho to us din briefing chhod do
+BRIEFING_STATE = os.path.join(os.path.dirname(TASKS_FILE), "briefing_state.json")  # Aakhri briefing ki tareekh
 _lock = threading.RLock()
 _thread = None
 
@@ -386,12 +389,79 @@ def snooze(minutes=10):
     return True
 
 
+# ============================================
+# 4. MORNING BRIEFING (.env BRIEFING_TIME=07:30, khali = band)
+#   Din mein ek baar. Awake ho to `briefing_pending` (main.py voice thread bolti hai), sleep mein ho to
+#   hooks["briefing"] (chime + HUD notification) aur poori briefing "Hey Jarvis" pe. Tareekh file mein
+#   rehti hai, isliye restart pe dobara nahi bajti.
+# ============================================
+def briefing_time():
+    """.env BRIEFING_TIME ("07:30") -> datetime.time, ya None (khali / galat = band)."""
+    raw = os.getenv("BRIEFING_TIME", "").strip()
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
+    if m and int(m[1]) < 24 and int(m[2]) < 60:
+        return datetime.time(int(m[1]), int(m[2]))
+    return None
+
+
+def _briefing_done_today(today):
+    try:
+        with open(BRIEFING_STATE, encoding="utf-8") as f:
+            return json.load(f).get("date") == today
+    except (OSError, ValueError):
+        return False
+
+
+def _briefing_mark(today):
+    try:
+        with open(BRIEFING_STATE, "w", encoding="utf-8") as f:
+            json.dump({"date": today}, f)
+    except OSError:
+        pass
+
+
+def check_briefing(now=None):
+    """Briefing ka time aa gaya (aur aaj abhi tak nahi hui) to trigger karo. True = trigger hua."""
+    global briefing_pending
+    at = briefing_time()
+    if not at:
+        return False
+    now = now or datetime.datetime.now()
+    today = now.date().isoformat()
+    target = datetime.datetime.combine(now.date(), at)
+    if now < target or _briefing_done_today(today):
+        return False
+    _briefing_mark(today)                       # Ek din mein ek baar (late start pe bhi)
+    if (now - target).total_seconds() > BRIEFING_GRACE:
+        return False                            # Bahut late (PC dopahar ko chala) - aaj chhod do
+    with _lock:
+        briefing_pending = True
+    if not awake and hooks["briefing"]:
+        try:
+            hooks["briefing"]()                 # Sleep mein: chime + notification, JARVIS jagta nahi
+        except Exception:
+            pass
+    return True
+
+
+def pop_briefing():
+    """True agar briefing bolni baaki hai (aur flag saaf kar deta hai)."""
+    global briefing_pending
+    with _lock:
+        was, briefing_pending = briefing_pending, False
+        return was
+
+
 def _loop():
     while True:
         try:
             check()
         except Exception:
             pass                                # Thread kabhi na mare
+        try:
+            check_briefing()
+        except Exception:
+            pass
         time.sleep(CHECK_SECONDS)
 
 
@@ -402,6 +472,10 @@ def start():
         return
     try:
         check(startup=True)     # Band rehte waqt jo nikal gaye -> missed (main wake pe batata hai)
+    except Exception:
+        pass
+    try:
+        check_briefing()        # Subah start hua aur briefing ka time nikal chuka ho
     except Exception:
         pass
     _thread = threading.Thread(target=_loop, daemon=True, name="scheduler")

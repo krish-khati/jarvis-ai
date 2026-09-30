@@ -35,3 +35,6 @@ logs/
 
 # Awaaz profile (speaker verification) - personal, kisi API ko nahi jaati
 voice_profile.npy
+
+# Morning briefing ki aakhri tareekh
+briefing_state.json

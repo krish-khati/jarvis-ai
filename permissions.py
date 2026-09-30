@@ -21,7 +21,7 @@ import tools
 
 SAFE, CONFIRM, NEVER = "SAFE", "CONFIRM", "NEVER"
 
-# Har tool ka risk level (tools.ALL_TOOLS ke 43 tools)
+# Har tool ka risk level (tools.ALL_TOOLS ke 44 tools)
 RISK = {
     # --- SAFE ---
     "web_search": SAFE, "get_weather": SAFE, "get_time_date": SAFE, "system_info": SAFE,
@@ -30,6 +30,7 @@ RISK = {
     "media_control": SAFE, "brightness": SAFE,
     "find_files": SAFE, "open_file": SAFE,                     # open_file exe/bat/py kabhi nahi kholta
     "note_add": SAFE, "notes_list": SAFE, "task_list": SAFE, "reminder_snooze": SAFE,
+    "morning_briefing": SAFE,
     "content_help": SAFE,
     "look_at_screen": SAFE, "read_screen": SAFE, "read_webpage": SAFE,
     "git_status": SAFE, "git_log": SAFE,                       # sirf read-only git
