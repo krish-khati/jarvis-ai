@@ -1360,6 +1360,148 @@ def delete_memory(what: str) -> str:
 
 
 # ============================================
+# 13b. DEV HELPER - clipboard ka code samjhana + git (SIRF PADHNA)
+#   - explain_clipboard: clipboard padhta hai (confirm ke baad, password ho sakta hai), AI se samjhata hai.
+#     Clipboard mein kabhi kuch likhta nahi. Code bolke nahi padhta: samjhaata hai, poora code HUD mein.
+#   - git_status / git_log: sirf padhne wale git commands, sirf allowed folders ke andar
+#     (JARVIS folder + .env DEV_PROJECT_DIRS, comma se alag). Sirf filenames/commit titles, diff nahi.
+#   - Git commit/push/pull/reset jaise write commands ka tool hai hi nahi, aur koi shell tool bhi nahi:
+#     "ye main khud nahi karunga, terminal se karo" (shortcuts.py mein jawab).
+# ============================================
+CLIP_WORDS = {"clipboard", "code", "galti", "samjhao", "samjha", "explain", "simple"}
+GIT_WORDS = {"git", "status", "commits", "commit"}
+CLIP_MAX = 6000                  # Isse lamba clipboard kaat ke pehla hissa liya jaata hai
+CODE_MARK = "###CODE###"
+
+
+def _clip_prompt(question, english):
+    import vision
+    lang = "English" if english else "Roman Hinglish (Hindi in English letters, never Devanagari)"
+    return (f"You are JARVIS helping Krish, a developer. Krish copied the text below to his clipboard "
+            f"and asks: '{question}'.\nLanguage: {lang}. Address him as 'sir'.\n"
+            f"{vision.EXPLAIN_STYLE}\n"
+            f"Only if Krish asked to fix, simplify or rewrite the code, add a line '{CODE_MARK}' after "
+            f"your sentences and then the full new code. Otherwise no code at all. No markdown headings.")
+
+
+@tool("Reading clipboard...", needs=CLIP_WORDS)
+def explain_clipboard(question: str = "") -> str:
+    """Read the code or text Krish copied to the Windows clipboard and explain it: what it does,
+    mistakes in it, or a simpler version. Use for 'clipboard ka code samjhao', 'is code mein galti batao'
+    (about copied code), 'isko simple karo'. Read-only: never writes to the clipboard. Asks Krish to
+    confirm first because the clipboard may hold a password. Pass Krish's question as-is."""
+    global private_reply
+    import brain
+    if not confirm("Sir, clipboard padh ke AI ko bhej doon? Isme password ho sakta hai."):
+        raise DirectReply("Theek hai sir, clipboard nahi padha.")
+    text = _get_clipboard()
+    if not text or not text.strip():
+        raise DirectReply("Sir, clipboard mein koi text nahi hai. Pehle code copy kijiye.", ok=False)
+    private_reply = True       # Clipboard ka text ya uska jawab terminal mein nahi dikhega
+    cut = len(text) > CLIP_MAX
+    if cut:
+        text = text[:CLIP_MAX]
+    question = " ".join(str(question or current_request or "isko samjhao").split())[:200]
+    english = "english" in question.lower()
+    answer = brain.generate_text(_clip_prompt(question, english) + "\n\nCLIPBOARD:\n" + text)
+    if not answer:
+        return "Error: could not explain the clipboard right now (AI not answering). Try again in a minute."
+
+    spoken, _, code = answer.partition(CODE_MARK)
+    spoken = re.sub(r"```.*?```", " ", spoken, flags=re.S)          # Bolne wale hisse mein code nahi
+    spoken = brain._tidy(" ".join(spoken.split()))
+    code = re.sub(r"^```\w*\n?|\n?```\s*$", "", code.strip()).strip()
+    note = f"Clipboard bahut lamba tha, sir, maine pehle {CLIP_MAX} characters liye. " if cut else ""
+    if code:
+        ui.add_message("ai", spoken + "\n\n" + code)      # Poora code HUD mein
+        raise DirectReply(f"{note}{spoken} Poora code screen pe hai, sir.")
+    raise DirectReply(note + spoken)
+
+
+# --- Git (READ-ONLY): kuch bhi likhne wala git command yahan nahi hai ---
+def _dev_dirs():
+    """Allowed project folders: JARVIS folder (jahan tools.py hai) + .env DEV_PROJECT_DIRS."""
+    dirs = [os.path.dirname(os.path.abspath(__file__))]
+    for d in os.getenv("DEV_PROJECT_DIRS", "").split(","):
+        d = d.strip().strip('"')
+        if d and os.path.isdir(d):
+            dirs.append(os.path.abspath(d))
+    return dirs
+
+
+def _pick_project(project):
+    """Naam se folder chuno (na ho to pehla = JARVIS). Allowed list ke bahar kuch nahi."""
+    dirs = _dev_dirs()
+    want = str(project or "").strip().lower()
+    if want:
+        for d in dirs:
+            if want in os.path.basename(d).lower():
+                return d
+        return None
+    return dirs[0]
+
+
+def _git_read(folder, *args):
+    """Sirf padhne wala git command (fixed list, shell nahi). (ok, output) return karta hai."""
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")     # status index ko na chhue
+    try:
+        r = subprocess.run(["git", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false",
+                            "-C", folder, *args], capture_output=True, text=True, timeout=10,
+                           encoding="utf-8", errors="replace", env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    return r.returncode == 0, r.stdout.strip() or r.stderr.strip()
+
+
+@tool("Checking git status...", needs=GIT_WORDS)
+def git_status(project: str = "") -> str:
+    """Read-only git status of Krish's project (branch, how many files changed, file names only,
+    never the changes themselves). project = optional folder name, empty = JARVIS. Use for
+    'git status batao'. There is no tool for commit/push/pull/reset - Krish must do those in the terminal."""
+    folder = _pick_project(project)
+    if not folder:
+        raise DirectReply("Sir, ye project meri allowed list mein nahi hai.", ok=False)
+    ok, out = _git_read(folder, "status", "--porcelain=v1", "-b")
+    if not ok:
+        raise DirectReply("Sir, yahan git repo nahi mila ya git nahi chala.", ok=False)
+    lines = out.splitlines()
+    head = lines[0][3:] if lines and lines[0].startswith("## ") else ""
+    branch = re.split(r"\.\.\.| \[", head)[0] or "unknown"
+    sync = re.search(r"\[(.+?)\]", head)
+    files = [l[3:].split(" -> ")[-1] for l in lines[1:]]
+    said = f"Sir, branch {branch} pe hain"
+    if sync:
+        said += " (" + sync[1].replace("ahead", "aage").replace("behind", "peeche") + ")"
+    if not files:
+        raise DirectReply(said + ", aur sab saaf hai, koi badlav nahi.")
+    names = ", ".join(os.path.basename(f) for f in files[:5])
+    more = f" aur {len(files) - 5} aur" if len(files) > 5 else ""
+    if len(files) > 5:
+        ui.add_message("ai", "Git status:\n" + "\n".join(files[:30]))
+    raise DirectReply(f"{said}. {len(files)} file badli hain: {names}{more}.")
+
+
+@tool("Reading git log...", needs=GIT_WORDS)
+def git_log(n: int = 5, project: str = "") -> str:
+    """Read-only list of the last n git commits (short id and title only, no changes). n = 1..10,
+    default 5. project = optional folder name. Use for 'aakhri 3 commits'."""
+    folder = _pick_project(project)
+    if not folder:
+        raise DirectReply("Sir, ye project meri allowed list mein nahi hai.", ok=False)
+    try:
+        n = max(1, min(int(n), 10))
+    except (TypeError, ValueError):
+        n = 5
+    ok, out = _git_read(folder, "log", f"-n{n}", "--pretty=format:%h %s")
+    if not ok or not out:
+        raise DirectReply("Sir, commits nahi mile, ya yahan git repo nahi hai.", ok=False)
+    rows = [(l.partition(" ")[0], l.partition(" ")[2]) for l in out.splitlines()]
+    ui.add_message("ai", "Aakhri commits:\n" + "\n".join(f"{h}  {s}" for h, s in rows))
+    titles = " ".join(f"{i}. {s[:70]}." for i, (_, s) in enumerate(rows, 1))
+    raise DirectReply(f"Sir, aakhri {len(rows)} commit: {titles} Poori list screen pe hai.")
+
+
+# ============================================
 # 14. SCREEN VISION - screen dekh ke sawaal ka jawab (vision.py)
 # ============================================
 @tool("Scanning screen...", needs=SCREEN_WORDS)
@@ -1569,6 +1711,6 @@ ALL_TOOLS = [
     reminder_add, task_list, task_delete, tasks_clear, reminder_snooze,
     content_help, copy_last_content, open_editor,
     lock_pc, shutdown_pc, restart_pc,
-    save_memory, delete_memory, look_at_screen,
+    save_memory, delete_memory, look_at_screen, explain_clipboard, git_status, git_log,
     send_whatsapp, whatsapp_call, end_call, read_messages,
 ]

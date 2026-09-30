@@ -166,7 +166,9 @@ def _asks_memory(text):
 # "screen pe kya hai" jaise seedhe sawaal -> bina main AI ke seedha vision tool
 SCREEN_ASK = re.compile(
     r"((meri |is |iss )?screen (pe|par|mein|me) kya (hai|dikh raha hai|chal raha hai))"
-    r"|((meri )?screen dekho)|(what'?s on (my |the )?screen)|(look at (my |the )?screen)")
+    r"|((meri )?screen dekho)|(what'?s on (my |the )?screen)|(look at (my |the )?screen)"
+    r"|((screen (pe|par|mein|me) )?(ka |wala |wale |ye |yeh |is |iss )?error (ko )?"
+    r"(samjhao|samjha do|samjha de|explain karo|explain kar do))")
 
 
 # ============================================
@@ -502,6 +504,45 @@ def _tasks_command(command, text, hi):
 
 
 # ============================================
+# Dev helper: "clipboard ka code samjhao", "git status batao", "aakhri 3 commits".
+#   Sab fullmatch. "git kya hota hai", "code likh do" AI ke paas jaate hain.
+#   Git ke write commands (commit/push/pull/reset...) NEVER: jawab "terminal se karo", koi tool nahi chalta.
+# ============================================
+_D_ASK = r"(?: (?:batao|bata do|bata de|dikhao|dikha do|dikha de|kya hai|dekho))?"
+GIT_STATUS_CMD = re.compile(rf"(?:mera |mere |meri )?(?:git (?:ka )?status|repo (?:ka )?(?:git )?status|"
+                            rf"project (?:ka )?(?:git )?status){_D_ASK}")
+GIT_LOG_CMD = re.compile(rf"(?:git log|(?:aakhri|aakhiri|last|pichle|pichhle|latest|recent)(?: (?P<n>\d{{1,2}}))? commits?)"
+                         rf"(?: (?P<n2>\d{{1,2}}))?{_D_ASK}")
+CLIP_CMD = re.compile(r"(?:is |iss |ye |yeh )?clipboard (?:ka |ke |wala |wale |mein |me |ko )*"
+                      r"(?:code |text |function )*(?:ko |mein |me )*"
+                      r"(?:samjhao|samjha do|samjha de|explain karo|explain kar do|simple karo|simple kar do|"
+                      r"galti(?:yan)? (?:batao|bata do|bata de))")
+_G_VERB = r"(?:commit|push|pull|reset|merge|rebase|stash|revert|checkout|cherry pick|force push)"
+_G_WRITE_A = re.compile(rf"git {_G_VERB}\b[\w\s.\-/]*")                      # "git push origin main"
+_G_WRITE_B = re.compile(rf"\b{_G_VERB}\b")
+_G_DO = re.compile(r"\b(?:kar do|kardo|karo|kar de|kar dena|kijiye|chalao|chala do|maar do|maro|now|abhi)\b")
+_G_CTX = re.compile(r"\b(?:git|github|repo|repository|changes|code|branch|remote|origin|isko|ise|ye|yeh)\b")
+_G_QUESTION = re.compile(r"\b(?:kya|kaun|kab|kaise|kyun|kyu|matlab|meaning|what|why|how|hota|hoti|hote|"
+                         r"difference|farak|karte|karta|karti|karein|samjhao|samjha|sikhao|explain)\b")
+
+
+def _dev_command(command, text, hi):
+    """Dev helper (bina AI). Jawab (text) ya None. Write git commands ko NEVER-level 'nahi' deta hai."""
+    if not _G_QUESTION.search(text) and (
+            _G_WRITE_A.fullmatch(text)
+            or (_G_WRITE_B.search(text) and _G_DO.search(text) and _G_CTX.search(text))):
+        return "Ye main khud nahi karunga, sir. Isko terminal se kar lijiye."
+    if GIT_STATUS_CMD.fullmatch(text):
+        return f"Sorry sir, {tools.git_status()}"          # Sahi chale to DirectReply uthta hai
+    m = GIT_LOG_CMD.fullmatch(text)
+    if m:
+        return f"Sorry sir, {tools.git_log(int(m['n'] or m['n2'] or 5))}"
+    if CLIP_CMD.fullmatch(text):
+        return f"Sorry sir, {tools.explain_clipboard(command)}"
+    return None
+
+
+# ============================================
 # Content creator: "Instagram caption do: Diwali reel", "10 hashtags do: coding", "copy kar do",
 #   "meri style casual rakhna", "CapCut kholo". Sawaal ("caption ka matlab kya hai") AI ke paas jaate hain.
 #   Topic ke liye asli command use hota hai (bade-chhote akshar waise hi rahein).
@@ -703,6 +744,10 @@ def handle(command):
 
     # --- Media keys / volume relative / brightness (app/website se PEHLE, warna "chalu karo"
     #     wali commands galat jagah chali jaati hain) ---
+    reply = _dev_command(command, text, hi)        # Dev helper: clipboard samjhao, git status/log
+    if reply:
+        return reply
+
     reply = _content_command(command, text, hi)    # Content pack: caption, script, copy, editors
     if reply:
         return reply

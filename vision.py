@@ -24,12 +24,20 @@ MAX_WIDTH = 1280   # Isse badi screen ho to chhoti kar do (fast upload, kam data
 # Groq ka image samajhne wala model (.env mein badal sakte ho)
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 
+# Error/code samjhane ka ek jaisa style (look_at_screen aur tools.explain_clipboard dono yahi use karte hain)
+EXPLAIN_STYLE = (
+    "Explain in 2-3 short sentences: first the reason (why it happens), then the fix. "
+    "Never read code aloud: mention only names in words, no code, no symbols. "
+)
+
 # Vision model ko instructions - jawab bola jaayega, isliye chhota
 VISION_PROMPT = (
     "You are JARVIS looking at Krish's computer screen (screenshot attached). "
     "Answer Krish's question about it. Reply in the same language as the question "
     "(Hindi/Hinglish in Roman letters/English). Address Krish as 'sir' (never 'bhai' or 'bro'). "
-    "Your reply is spoken aloud: max 2 short sentences, no markdown, no lists. "
+    "Your reply is spoken aloud: no markdown, no lists. "
+    "If the question is about an error or code, follow this style: " + EXPLAIN_STYLE +
+    "Otherwise max 2 short sentences. "
     "If you can't read something clearly, say so. "
     "Question: "
 )
