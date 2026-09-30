@@ -29,3 +29,6 @@ notes.json.tmp
 # Reminders / tasks - personal
 tasks.json
 tasks.json.tmp
+
+# Agent ka permission log (sirf tool naam + allow/deny)
+logs/

@@ -112,6 +112,9 @@ LOCK_WORDS = {"lock", "लॉक"}
 CLOSE_WORDS = {"close", "band", "bandh", "quit", "exit", "kill", "बंद"}
 OPEN_WORDS = {"open", "kholo", "khol", "kholna", "launch", "start", "chalao", "chalu",
               "खोलो", "ओपन"}
+# Har tool ke apne alag words (OPEN_WORDS sirf open_app / open_website / open_file / read_webpage kholta hai)
+EDITOR_WORDS = {"capcut", "davinci", "resolve", "premiere", "editor", "video editor"}
+MEMORY_SAVE_WORDS = {"yaad", "yad", "remember", "save", "note", "rakhna", "rakho", "rakh", "memory", "याद"}
 # Memory se kuch mitana: "ye bhool jao", "birthday wali baat bhool jao"
 FORGET_WORDS = {"bhool", "bhul", "bhoolo", "bhulo", "forget", "delete", "hata", "hatao",
                 "mita", "mitao", "भूल", "भूलो", "हटाओ"}
@@ -278,7 +281,7 @@ def open_website(name: str) -> str:
 # ============================================
 # 3. YOUTUBE PE GAANA/VIDEO CHALANA
 # ============================================
-@tool("Playing {song} on YouTube...", needs=PLAY_WORDS | OPEN_WORDS)
+@tool("Playing {song} on YouTube...", needs=PLAY_WORDS)
 def play_on_youtube(song: str) -> str:
     """Play a song or video on YouTube (opens the top result and starts playing).
     ONLY use when Krish asks to play/chalao/bajao something."""
@@ -380,6 +383,9 @@ def close_app(name: str) -> str:
     """Close (quit) a running Windows application by name, e.g. chrome, notepad,
     calculator, vs code, file explorer, spotify."""
     key = name.lower().strip()
+    # Confirm hamesha (DRY_RUN mein bhi poochho; asli band karna neeche DRY_RUN se rukta hai)
+    if not confirm(f"Sir, pakka? {name} band kar doon?"):
+        raise DirectReply(f"Theek hai sir, {name} band nahi kiya.")
 
     # File Explorer special hai: explorer.exe band kiya to taskbar bhi gayab ho
     # jaata hai! Isliye sirf Explorer ki windows band karte hain.
@@ -661,7 +667,9 @@ def brightness(action: str, level: int = None) -> str:
 #   nahi padhte; delete / edit / move / rename koi tool nahi hai.
 # ============================================
 FIND_WORDS = {"find", "search", "dhoondo", "dhundo", "dhoondh", "dhundh", "dikhao", "file", "files",
-              "latest", "naya", "nayi", "newest", "recent", "open", "kholo", "khol", "chalao"}
+              "latest", "naya", "nayi", "newest", "recent",       # "open/kholo" se find_files nahi khulta
+              "pdf", "word", "excel", "ppt", "zip", "txt", "photo", "image", "video",
+              "downloads", "download", "documents", "document", "desktop", "pictures", "picture"}
 FILE_OPEN_WORDS = {"open", "kholo", "khol", "kholna", "chalao", "launch", "start"}
 _SHELL_FOLDER_KEYS = {"documents": "Personal", "downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
                       "desktop": "Desktop", "pictures": "My Pictures"}
@@ -1205,7 +1213,7 @@ def _find_editor(key):
     return None
 
 
-@tool("Opening video editor: {name}...", needs=OPEN_WORDS)
+@tool("Opening video editor: {name}...", needs=EDITOR_WORDS)
 def open_editor(name: str) -> str:
     """Open a video editor: 'capcut', 'davinci' (DaVinci Resolve) or 'premiere' (Premiere Pro),
     only if it is installed. Use for 'CapCut kholo', 'DaVinci kholo', 'Premiere kholo'."""
@@ -1228,7 +1236,9 @@ def open_editor(name: str) -> str:
 # ============================================
 @tool("Locking PC...", needs=LOCK_WORDS)
 def lock_pc() -> str:
-    """Lock the Windows PC (goes to the lock screen)."""
+    """Lock the Windows PC (goes to the lock screen). Asks Krish to confirm first."""
+    if not confirm("Sir, pakka? PC lock kar doon?"):
+        raise DirectReply("Theek hai sir, PC lock nahi kiya.")
     if DRY_RUN:
         return _dry_run("lock PC (LockWorkStation)")
     import ctypes
@@ -1333,15 +1343,18 @@ def get_weather(city: str) -> str:
 # ============================================
 # 13. LONG-TERM MEMORY - Krish ki baatein yaad rakhna / bhoolna (memory.py)
 # ============================================
-@tool("Saving to memory: {fact}...")
+@tool("Saving to memory: {fact}...", needs=MEMORY_SAVE_WORDS)
 def save_memory(fact: str) -> str:
     """Save an important long-term fact about Krish, e.g. birthday, likes/dislikes,
     friends' or family names, goals. Use when Krish says 'yaad rakhna' / 'remember'
     or shares personal info. Write the fact as a short clear sentence, e.g.
     'Krish ka birthday 9 June ko hai'. If Krish CORRECTS an earlier fact, save the full
     corrected fact (it replaces the old one automatically). Write spelled usernames/IDs
-    as one word, e.g. 'krrish972'."""
+    as one word, e.g. 'krrish972'. Asks Krish to confirm first; only works when Krish's message
+    says yaad/remember/save/note."""
     import memory
+    if not confirm("Sir, ye baat yaad rakh loon?"):
+        raise DirectReply("Theek hai sir, memory mein save nahi kiya.")
     status, old = memory.add(fact)
     if status == "updated":
         return f"Updated memory: {old} -> {fact}"
@@ -1577,7 +1590,7 @@ def read_screen() -> str:
     _read_aloud(readaloud.cut(answer))
 
 
-@tool("Reading web page aloud: {url}...", needs=READ_ALOUD_WORDS)
+@tool("Reading web page aloud: {url}...", needs=READ_ALOUD_WORDS | OPEN_WORDS)
 def read_webpage(url: str) -> str:
     """Read aloud the text of a web page. url must be a full http or https link Krish gave (typed or
     from the clipboard). Extracts at most 3000 characters of plain text and speaks it. The page text
