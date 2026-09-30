@@ -126,11 +126,13 @@ def voice_ask(question):
     global confirm_wait_seconds
     started = time.time()
     ui.set_state("speaking")
+    ui.ask_caption(question)                # Sawaal bade caption mein bhi (HUD par hi, terminal mein nahi)
     voice.speak(question, private=True)     # Sawaal mein message ka text hai - terminal mein nahi
     ui.set_state("listening")
     answer = voice.listen_command(wait_seconds=CONFIRM_WAIT_SECONDS + 2)
     confirm_wait_seconds += time.time() - started
     if not answer:
+        ui.ask_caption("")                  # Bina jawab ke sawaal caption mein na atke
         ui.log("Jawab nahi mila -> cancel")
         return None
     print(f"Krish: {answer}")
@@ -223,12 +225,14 @@ def voice_confirm(question):
     global confirm_wait_seconds
     started = time.time()
     ui.set_state("speaking")
+    ui.ask_caption(question)              # CONFIRM sawaal bade caption mein bhi
     voice.speak(question, cache=True)     # Sawaal hamesha same hote hain -> save karke dobara use
     ui.set_state("listening")
     answer = voice.listen_command(wait_seconds=CONFIRM_WAIT_SECONDS)
     # Latency mein ye time alag dikhana hai (ye aapke jawab ka intezaar hai, brain ka time nahi)
     confirm_wait_seconds += time.time() - started
     if not answer:
+        ui.ask_caption("")
         ui.log("Confirmation ka jawab nahi mila -> cancel")
         return False
     print(f"Krish: {answer}")
@@ -575,6 +579,10 @@ class Api:
         """HUD ka "Awaaz dobara yaad karo" button: voice loop agli baar mein enrollment chalayega."""
         speaker.enroll_requested.set()
         return "ok"
+
+    def cancel_agent(self):
+        """HUD ke plan wale STOP button: sirf chalta hua agent goal roko (bolna nahi)."""
+        agent.cancel()
 
     def stop(self):
         """HUD ke STOP button / Esc: sirf bolna rok do (window khuli rahe); agent chal raha ho to wo bhi."""

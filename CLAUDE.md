@@ -52,7 +52,7 @@ Windows startup (user runs this, Claude must not install it on its own):
 | `agent.py` | Multi-step goal agent: plan + loop, har tool call permissions.Guard se, limits, cancel |
 | `speaker.py` | Speaker verification (sherpa-onnx): VAD, denoise, embedding, profile, enrollment, commands, `--score/--calibrate` |
 | `translator.py` / `readaloud.py` | Translator mode (pairs, parse, translate prompt) / read-aloud helpers (speech cleanup, web page fetch+extract, 6-line groups) |
-| `ui.py` | Terminal print + `window.jarvis` bridge (`setState`, `log`, `wake`, `sleep`, `addMessage`, `setStats`, `setWeather`, `action`, `setLevel`), window show/hide |
+| `ui.py` | Terminal print + `window.jarvis` bridge (`setState`, `log`, `wake`, `sleep`, `addMessage`, `setStats`, `setWeather`, `action`, `setLevel`, `plan`, `planStep`, `planEnd`, `showAsk`), window show/hide |
 | `ui/index.html` | Single-file HUD (HTML+CSS+JS). `#preview` hash shows demo data in a browser (used for Edge headless screenshots) |
 | `jarvis.py` | Text mode; sets typed `confirm` / `ask_user` |
 | `README.md` | User-facing setup guide (includes WhatsApp setup, commands, safety) |
@@ -93,6 +93,13 @@ Python 3.14 notes: PyAudio and pygame have no wheels, so the project uses `sound
 - `tools.morning_briefing` (SAFE, lock words briefing/morning/plan) + `tools.briefing_text()`: template se 4-5 chhote sentence, koi AI call nahi. Hisse: tareekh/din/time, mausam (`get_weather(BRIEFING_CITY)`, 6 s se der ho ya city khali/internet nahi to chhod deta hai), aaj ke reminders (max 2 naam), notes ki ginti, naye WhatsApp messages ki SIRF ginti (`notifications.count_unread`, kuch consume/read mark nahi hota, text/naam kabhi nahi). Jawab `private_reply` (reminder text terminal mein nahi). Kuch bhi fail ho to wo hissa chhoot jaata hai, briefing atakti nahi.
 - Shortcut (`shortcuts.BRIEFING_CMD`, fullmatch): "good morning", "morning briefing do", "briefing sunao", "aaj ka plan batao". Sawaal ("briefing ka matlab kya hai") AI ke paas.
 - Auto: `.env` `BRIEFING_TIME=07:30` (khali = band), `BRIEFING_CITY` (khali = mausam nahi; abhi khali hai, city user se pooch ke bharni hai). `scheduler.check_briefing` har 20 s (aur startup pe): din mein ek baar (`briefing_state.json`, gitignored), BRIEFING_TIME se 3 ghante se zyada late start ho to us din skip. Awake: `briefing_pending` -> `main.announce_briefing` (voice loop). Sleep: `hooks["briefing"]` = chime + HUD notification (JARVIS jagta nahi), poori briefing jab "Hey Jarvis" se jaage (`active_mode` mein `announce_briefing`).
+
+## HUD: agent plan panel + STOP + CONFIRM caption (DRY_RUN=1 fake-window test + Edge headless screenshot `#preview-plan`)
+
+- `ui/index.html` (design same, sirf jodha): Activity panel ke upar "AGENT PLAN" numbered steps, status PENDING/RUNNING/DONE/FAILED/BLOCKED. `window.jarvis.plan(steps)` (khaali list = hata do), `planStep(index, status)` (index 0 se), `planEnd()` (STOP chhupao, steps dikhte rahein), `showAsk(text)` (bade amber caption mein sawaal; conversation list mein nahi; agla message ise badalta hai). STOP button sirf plan chalte waqt dikhta hai, click = `Api.cancel_agent` -> `agent.cancel()` (dock wala Stop pehle jaisa: bolna roko + agent).
+- `ui.py`: `plan(steps)`, `plan_step(i, status)`, `plan_end()`, `ask_caption(text)`. Suspend/hidden mein `plan/planStep/planEnd` queue hote hain (order se replay `show_window` pe), `showAsk` queue NAHI hota (purana sawaal baad mein galat). Hidden mein `body.idle` sab CSS animation roke rakhta hai.
+- `agent.py`: har step ka status HUD panel mein (`_show_plan` -> `ui.plan`, purane per-step "Plan" Activity cards hata diye). Tool `blocked` (safety layer / NEVER) = step BLOCKED phir agla step, Krish ne mana = FAILED phir agla; cancel/limit = chalta step FAILED; `replan` pe naya plan (pehle ke steps done). `run()` ke finally mein `ui.plan_end()`.
+- `main.py`: `voice_confirm` / `voice_ask` sawaal `ui.ask_caption` se bade caption mein bhi (sirf HUD, terminal mein nahi; bina jawab caption saaf).
 
 ## Brain flow (brain.ask)
 

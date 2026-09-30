@@ -162,6 +162,29 @@ body[data-state="sleeping"] .pill .dot { background: var(--deep); box-shadow: no
 .acts .empty { display: block; border: 0; opacity: 0.4; font-size: 0.85rem; }
 @keyframes fadein { from { opacity: 0; transform: translateY(4px); } }
 
+/* ---------- Agent plan (Activity panel ke upar, sirf plan ho tab dikhta hai) ---------- */
+.plan { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.plan[hidden] { display: none; }
+.plan-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;
+  font-size: 0.68rem; letter-spacing: 0.2em; color: var(--blue); }
+.plan-stop { display: none; padding: 3px 12px; font: inherit; font-size: 0.68rem; letter-spacing: 0.18em; cursor: pointer;
+  color: var(--amber); background: rgba(60,26,8,0.6); border: 1px solid rgba(255,178,71,0.55); border-radius: 3px; }
+.plan-stop:hover { box-shadow: 0 0 12px rgba(255,150,60,0.5); }
+.plan.running .plan-stop { display: inline-block; }
+.plan-steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.plan-steps li { counter-increment: step; display: grid; grid-template-columns: 1.4em 1fr auto; gap: 8px; align-items: start;
+  padding: 4px 0; font-size: 0.84rem; }
+.plan-steps li::before { content: counter(step) "."; color: var(--blue); opacity: 0.8; }
+.plan-steps .pt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-steps .ptag { font-size: 0.62rem; letter-spacing: 0.14em; color: var(--blue); margin-top: 2px; }
+.plan-steps .pending { opacity: 0.55; }
+.plan-steps .running .pt { color: var(--cyan); }
+.plan-steps .running .ptag { color: var(--cyan); animation: blink 0.8s infinite; }
+.plan-steps .done .ptag { color: var(--blue); }
+.plan-steps .failed .ptag { color: var(--fail); }
+.plan-steps .blocked .ptag { color: var(--amber); }
+.plan-steps .blocked .pt { opacity: 0.7; }
+
 /* ---------- Center dial ---------- */
 .center { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; min-width: 0; }
 .dial {
@@ -190,6 +213,7 @@ body[data-state="thinking"] .dial-core .state { color: var(--amber); }
   font-size: clamp(1.05rem, 2.2vh, 1.35rem); line-height: 1.5; font-weight: 500;
 }
 .caption .user { color: var(--amber); }
+.caption .ask { color: var(--amber); font-weight: 700; text-shadow: 0 0 14px rgba(255,176,58,0.45); }
 .caption .cursor { display: inline-block; width: 0.5em; height: 1em; margin-left: 2px; vertical-align: -0.12em; background: var(--cyan); animation: blink 0.9s infinite; }
 .note { margin-top: 6px; min-height: 1.3em; font-size: 0.85rem; letter-spacing: 0.14em; color: rgba(143,227,255,0.6); text-transform: uppercase; }
 
@@ -358,6 +382,10 @@ body.snap, body.snap * { transition: none !important; }
 
     <div class="panel activity">
       <h3>Activity</h3>
+      <div class="plan" id="plan" hidden>
+        <div class="plan-head"><span>AGENT PLAN</span><button class="plan-stop" id="planStop" title="Agent ko roko" aria-label="Stop agent">STOP</button></div>
+        <ol class="plan-steps" id="planSteps"></ol>
+      </div>
       <ul class="acts" id="acts"><li class="empty">Koi kaam nahi chal raha</li></ul>
     </div>
   </section>
@@ -651,6 +679,38 @@ body.snap, body.snap * { transition: none !important; }
     li.querySelector(".tag").textContent = status.toUpperCase();
   }
 
+  /* ================= AGENT PLAN ================= */
+  const PLAN_STATUS = ["pending", "running", "done", "failed", "blocked"];
+  const planBox = $("plan"), planList = $("planSteps");
+  // steps = ["pehla kaam", ...]; khaali list = plan hata do. STOP tab tak dikhta hai jab tak planEnd() na aaye.
+  function plan(steps) {
+    steps = Array.isArray(steps) ? steps.slice(0, 8) : [];
+    planList.textContent = "";
+    if (!steps.length) { planBox.hidden = true; planBox.classList.remove("running"); return; }
+    steps.forEach((text) => {
+      const li = document.createElement("li");
+      li.className = "pending";
+      li.innerHTML = '<span class="pt"></span><span class="ptag">PENDING</span>';
+      li.querySelector(".pt").textContent = String(text || "");
+      li.title = String(text || "");
+      planList.appendChild(li);
+    });
+    planBox.hidden = false;
+    planBox.classList.add("running");
+  }
+  function planStep(index, status) {
+    const li = planList.children[Number(index)];
+    if (!li) return;
+    status = PLAN_STATUS.includes(status) ? status : "pending";
+    li.className = status;
+    li.querySelector(".ptag").textContent = status.toUpperCase();
+  }
+  function planEnd() { planBox.classList.remove("running"); }   // Agent khatam: STOP chhupao, steps dikhte rahein
+  $("planStop").addEventListener("click", (e) => {
+    e.stopPropagation();
+    try { const a = window.pywebview && window.pywebview.api; if (a && a.cancel_agent) a.cancel_agent(); } catch (err) {}
+  });
+
   /* ================= LOG (dial ke neeche note line) ================= */
   let noteTimer = null;
   function log(text) {
@@ -702,6 +762,15 @@ body.snap, body.snap * { transition: none !important; }
       span.textContent = text.slice(0, i);
       if (i >= text.length) { clearInterval(typeTimer); setTimeout(() => cur.remove(), 1200); }
     }, 22);
+  }
+
+  // CONFIRM / sawaal bade caption mein (amber, bold). Conversation list mein nahi; agla message ise badal deta hai.
+  function showAsk(text) {
+    clearInterval(typeTimer);
+    caption.textContent = "";
+    if (!text) return;
+    const q = document.createElement("span"); q.className = "ask"; q.textContent = String(text);
+    caption.appendChild(q);
   }
 
   function setLevel(v) {
@@ -787,7 +856,7 @@ body.snap, body.snap * { transition: none !important; }
   });
 
   /* ================= Python bridge ================= */
-  window.jarvis = { wake, sleep, setState, addMessage, log, notify, setLevel, setStats, setWeather, action, setVisible };
+  window.jarvis = { wake, sleep, setState, addMessage, log, notify, setLevel, setStats, setWeather, action, setVisible, plan, planStep, planEnd, showAsk };
 
   addEventListener("resize", sizeCanvas);
   sizeCanvas();
@@ -795,6 +864,16 @@ body.snap, body.snap * { transition: none !important; }
   applyRunState();
 
   /* ================= Preview (sirf browser mein "#preview" / "#preview-sleep") ================= */
+  if (location.hash === "#preview-plan") {
+    body.classList.add("snap");
+    setTimeout(() => {
+      wake();
+      plan(["Delhi ka weather dekho", "Screen padho", "WhatsApp message bhejo", "Summary batao"]);
+      planStep(0, "done"); planStep(1, "failed"); planStep(2, "blocked"); planStep(3, "running");
+      showAsk("Sir, agent send_whatsapp karna chahta hai. Chalau?");
+      setState("listening");
+    }, 200);
+  }
   if (location.hash === "#preview") {
     body.classList.add("snap");
     setTimeout(() => {

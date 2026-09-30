@@ -233,6 +233,7 @@ def run(goal):
     finally:
         tools.agent_capture = prev_capture
         running = False
+        ui.plan_end()
         cancel_event.clear()
         if watch:
             try:
@@ -274,9 +275,6 @@ def _run(goal, watch):
         ui.log("Agent: plan nahi bana -> normal AI")
         return None
     _show_plan(plan)
-    cards = [next(tools._action_ids) for _ in plan]
-    for aid, step in zip(cards, plan):
-        ui.action(aid, "Plan", _redact(step), "pending")
 
     history, done, notes = [], [], []
     tool_calls = errors_in_row = tool_fail_streak = asks = 0
@@ -284,11 +282,12 @@ def _run(goal, watch):
     hint = ""
 
     def set_card(i, status):
-        if i < len(cards):
-            ui.action(cards[i], "Plan", _redact(plan[i]), status)
+        if 0 <= i < len(plan):
+            ui.plan_step(i, status)
 
     def finish(text):
         set_card(idx, "failed" if _cancelled() else "done")        # Chalta hua step ka card band
+        ui.plan_end()                                              # STOP button chhupao
         return _final(text, guard, notes)
 
     set_card(0, "running")
@@ -323,6 +322,9 @@ def _run(goal, watch):
             _show_plan(plan)
             errors_in_row = 0
             idx = min(idx, len(plan) - 1)
+            for i in range(idx):
+                set_card(i, "done")                 # Naye plan mein ab tak ke steps done dikhao
+            set_card(idx, "running")
             continue
 
         if action == "ask":
@@ -372,11 +374,17 @@ def _run(goal, watch):
                 notes.append("never")
             history.append(f"{tool_calls}. {name} -> BLOCKED: {text}")
             done.append(f"{name} roka gaya")
+            set_card(idx, "blocked")                 # Safety layer ne roka: step blocked, agla step
+            idx = min(idx + 1, len(plan))
+            set_card(idx, "running")
             errors_in_row = 0
             hint = "That was blocked by the safety layer. Do not try to get around it; continue with what is allowed or finish."
         elif status == "denied":
             history.append(f"{tool_calls}. {name} -> Krish said no / did not confirm. It was NOT done.")
             done.append(f"{name} Krish ne nahi kiya")
+            set_card(idx, "failed")
+            idx = min(idx + 1, len(plan))
+            set_card(idx, "running")
             errors_in_row = tool_fail_streak = 0
             hint = "Krish declined. Do not retry it; finish or do something else that is allowed."
         elif status == "error":
@@ -403,6 +411,7 @@ def _show_plan(plan):
     lines = [f"{i}. {_redact(s)}" for i, s in enumerate(plan, 1)]
     print("[Agent] Plan:\n  " + "\n  ".join(lines))
     ui.add_message("ai", "Plan:\n" + "\n".join(lines))
+    ui.plan([_redact(s) for s in plan])                 # Activity panel: numbered steps + STOP
 
 
 def _final(text, guard, notes):

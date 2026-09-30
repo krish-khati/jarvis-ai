@@ -10,6 +10,8 @@
 #     set_weather -> jarvis.setWeather(city, temp, desc)
 #     action    -> jarvis.action(id, title, detail, 'running'/'done'/'failed')
 #     set_level -> jarvis.setLevel(0..1)   (bolte waqt waveform naache)
+#     plan / plan_step / plan_end -> jarvis.plan(steps) / planStep(i, status) / planEnd() (agent ka plan + STOP)
+#     ask_caption -> jarvis.showAsk(text)  (CONFIRM sawaal bade caption mein)
 #   Window chhupi ho to: JS ki animations/canvas band (jarvis.setVisible), stats/level
 #   bhejna band, aur WebView2 ki memory kam (Low target + TrySuspend).
 # ============================================
@@ -46,7 +48,8 @@ def _js(func, *args):
             # Page suspend hai - evaluate_js atak jaata. Zaroori cheezein yaad rakho, dikhne pe chalengi
             if func in ("sleep", "setState"):
                 _pending_state = (func, args)
-            elif func in ("addMessage", "action", "log", "setWeather", "notify") and len(_pending) < _MAX_PENDING:
+            elif func in ("addMessage", "action", "log", "setWeather", "notify", "plan", "planStep", "planEnd") \
+                    and len(_pending) < _MAX_PENDING:
                 _pending.append((func, args))
             return
         try:
@@ -219,3 +222,30 @@ def set_level(level):
         return
     _last_level_sent = now
     _js("setLevel", round(max(0.0, min(1.0, float(level))), 3))
+
+
+PLAN_STATUSES = ("pending", "running", "done", "failed", "blocked")
+
+
+def plan(steps):
+    """Agent ka plan Activity panel mein (numbered steps, sab 'pending'). Khaali list = plan hata do.
+    Chhupi window mein queue hota hai, dikhne pe chalta hai."""
+    _js("plan", [str(s) for s in steps])
+
+
+def plan_step(index, status):
+    """Plan ka step (0 se shuru) ka status: pending / running / done / failed / blocked."""
+    if status not in PLAN_STATUSES:
+        status = "pending"
+    _js("planStep", int(index), status)
+
+
+def plan_end():
+    """Agent khatam (ya ruka): STOP button chhupao, steps dikhte rahein."""
+    _js("planEnd")
+
+
+def ask_caption(text):
+    """CONFIRM / sawaal bade caption mein. Khaali text = caption saaf. Chhupi window mein queue nahi
+    (purana sawaal baad mein dikhana galat hota)."""
+    _js("showAsk", text or "")
