@@ -25,7 +25,11 @@ VOCAB_FILE = os.path.join(HERE, "vocab.txt")
 USAGE_FILE = os.path.join(HERE, "stt_usage.json")     # gitignored
 
 # --- Settings (.env se; yahan sirf default) ---
-STT_ORDER = [e.strip() for e in os.getenv("STT_ORDER", "google,groq,gemini").split(",") if e.strip()]
+import logging as _logging
+for _n in ("google_genai", "google_genai.models", "google_genai.types"):
+    _logging.getLogger(_n).setLevel(_logging.ERROR)     # AFC warning chup
+
+STT_ORDER = [e.strip() for e in os.getenv("STT_ORDER", "groq,google,gemini").split(",") if e.strip()]
 GEMINI_STT_MODEL = os.getenv("GEMINI_STT_MODEL", "gemini-3.5-transcribe")
 GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 # Roz ki call limit (0 = koi limit nahi). Asli limit se thodi kam rakhi hai; 429 aaye to bhi switch hota hai

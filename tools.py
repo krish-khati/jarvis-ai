@@ -563,13 +563,39 @@ _BRIGHTNESS_HEAD = "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBri
 
 def _brightness_read():
     """Laptop screen ka current brightness (0-100). Na mile / error ho to None."""
-    ps = f"$m = {_BRIGHTNESS_HEAD}; if ($m) {{ $m.WmiGetBrightness().CurrentBrightness }} else {{ 'NONE' }}"
+    # Padhna WmiMonitorBrightness.CurrentBrightness se hota hai (Methods class mein get method hai hi nahi)
+    ps = ("$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | "
+          "Where-Object Active | Select-Object -First 1; "
+          "if ($m) { $m.CurrentBrightness } else { 'NONE' }")
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
                              capture_output=True, text=True, timeout=25).stdout.strip()
         return None if out in ("", "NONE") else int(out)
     except (subprocess.SubprocessError, OSError, ValueError):
         return None
+
+
+_NO_READ = ("Could not read the current brightness, so up/down is not possible. "
+            "Ask Krish to say a number, like 'brightness 50 karo'.")
+
+
+def _brightness_apply(target):
+    """Write karo, phir wapas padh ke verify karo. Return: (ok, asli level ya None, likha gaya?)."""
+    if not _brightness_write(target):
+        return False, None, False
+    time.sleep(0.4)                                  # panel ko badalne do
+    now = _brightness_read()
+    return (now is not None and abs(now - target) <= 2), now, True
+
+
+def _brightness_verdict(ok, now, wrote, target, before=None):
+    """Verify ke baad jawab: "kar diya" sirf tab jab screen ne sach mein wo level dikhaya."""
+    if not wrote:
+        return _NO_BRIGHTNESS
+    if not ok:
+        return (f"Could not verify brightness change: asked {target}%, "
+                f"screen reads {now if now is not None else 'unknown'}%.")
+    return f"Screen brightness {before}% -> {now}%." if before is not None else f"Screen brightness {now}% set."
 
 
 def _brightness_write(level):
@@ -602,7 +628,8 @@ def brightness(action: str, level: int = None) -> str:
             return "Could not set brightness: level must be a number from 0 to 100."
         if DRY_RUN:
             return _dry_run(f"set screen brightness to {target}%")
-        return f"Screen brightness {target}% set." if _brightness_write(target) else _NO_BRIGHTNESS
+        ok, now, wrote = _brightness_apply(target)
+        return _brightness_verdict(ok, now, wrote, target)
 
     if act in ("up", "down"):
         step = 10                                    # 10% ka step
@@ -610,10 +637,10 @@ def brightness(action: str, level: int = None) -> str:
             return _dry_run(f"screen brightness {'+' if act == 'up' else '-'} {step}%")
         current = _brightness_read()
         if current is None:
-            return _NO_BRIGHTNESS
+            return _NO_READ
         target = max(0, min(100, current + (step if act == "up" else -step)))
-        return (f"Screen brightness {current}% -> {target}%." if _brightness_write(target)
-                else _NO_BRIGHTNESS)
+        ok, now, wrote = _brightness_apply(target)
+        return _brightness_verdict(ok, now, wrote, target, before=current)
 
     # action == "get": sirf padhna hai (kuch badalta nahi) - DRY_RUN mein bhi chalega
     current = _brightness_read()

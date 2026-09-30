@@ -123,7 +123,8 @@ last_brain = None
 
 # System prompt - ye JARVIS ki personality aur rules batata hai (dono brains ke liye same)
 import logging as _logging
-_logging.getLogger("google_genai.types").setLevel(_logging.ERROR)   # AFC warning chup
+for _n in ("google_genai", "google_genai.models", "google_genai.types", "google_genai._api_client"):
+    _logging.getLogger(_n).setLevel(_logging.ERROR)     # AFC warning chup (saare Gemini paths)
 
 SYSTEM_PROMPT = (
     "You are JARVIS, a smart friendly assistant for Krish. "
