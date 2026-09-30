@@ -32,6 +32,7 @@ import notifications  # WhatsApp ke aaye messages (Windows notifications, sirf R
 import tools    # Tools (confirm function yahan set karte hain)
 import translator     # Translator mode (anuvaad)
 import ui       # Screen pe status
+import telegram_bot   # Telegram se command (TELEGRAM_ENABLED=1 ho tabhi chalta hai)
 import voice    # Sunna aur bolna
 
 # Jaagne pe JARVIS ki pehli line (UI ki wake animation bhi yahi dikhati hai)
@@ -696,6 +697,10 @@ def start_with_ui():
         if tools.DRY_RUN:
             ui.log("[DRY RUN] shutdown/restart/lock/close_app sirf print honge")
         threading.Thread(target=stats_loop, daemon=True).start()
+        try:
+            telegram_bot.start(brain_lock)      # alag thread, band ho to kuch nahi
+        except Exception as e:
+            print(f"(Telegram start error: {type(e).__name__})")
         try:
             voice_loop()
         except Exception as e:

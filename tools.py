@@ -140,6 +140,7 @@ class DirectReply(BaseException):
 #   brain.ask() har message pe current_request set karta hai.
 # ============================================
 current_request = ""
+source = ""               # "telegram" = command Telegram se aaya: NEVER tools (shutdown/restart/lock) band
 
 SHUTDOWN_WORDS = {"shutdown", "shut down", "band", "bandh", "off", "power off",
                   "turn off", "switch off", "बंद", "शटडाउन"}
@@ -200,6 +201,9 @@ def _asked_for(words):
 _action_ids = itertools.count(1)     # UI ke Activity panel ke liye har kaam ka alag number
 
 
+TELEGRAM_BLOCKED = {"shutdown_pc", "restart_pc", "lock_pc"}     # permissions.RISK ke NEVER tools
+
+
 def tool(message, needs=None, blocked_by=None):
     def decorator(func):
         @functools.wraps(func)     # Gemini ko asli function ka naam/docstring dikhe
@@ -222,6 +226,12 @@ def tool(message, needs=None, blocked_by=None):
             else:
                 title, detail = filled, func.__name__.replace("_", " ")
             title, detail = (title or func.__name__)[:40], detail[:60]
+
+            # --- Telegram se NEVER tools (shutdown/restart/lock) bilkul band ---
+            if source == "telegram" and func.__name__ in TELEGRAM_BLOCKED:
+                ui.log(f"BLOCKED {func.__name__}: Telegram se nahi")
+                ui.action(aid, title, "Blocked (Telegram)", "failed")
+                raise DirectReply("Ye PC pe hi hoga, sir. Telegram se nahi kar sakta.", ok=False)
 
             # --- Safety lock: kya Krish ne abhi ye kaam maanga hai? ---
             if blocked_by and _asked_for(blocked_by):
