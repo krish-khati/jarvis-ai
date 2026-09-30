@@ -6,12 +6,16 @@
 #   - Payment/UPI/bank, dialer/SMS, Settings, Play Store, file-manager apps kabhi nahi khulte, aur unke upar
 #     (foreground mein hon to) tap/type/media bhi nahi chalta.
 #   - Screenshot sirf RAM mein (disk pe nahi). Log mein kabhi text/app naam nahi.
+#   - Screen ka text `uiautomator dump` se padhte hain (password wale nodes chhupaye), phir button/box ke
+#     NAAM se tap hota hai - coordinates bolne ki zaroorat nahi. Dump XML RAM mein hai (phone par /sdcard
+#     par temp file turant delete ho jaati hai).
 #   Tests `_adb` ko fake karte hain (ek hi jagah jahan se adb chalta hai).
 # ============================================
 import ipaddress
 import os
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 
 from dotenv import load_dotenv
 
@@ -237,7 +241,7 @@ def tap(x, y):
     _shell("input", "tap", str(int(x)), str(int(y)))
 
 
-KEYS = {"back": 4, "home": 3,
+KEYS = {"back": 4, "home": 3, "enter": 66, "search": 84, "delete": 67, "tab": 61,
         "play": 126, "pause": 127, "playpause": 85, "next": 87, "previous": 88,
         "volume_up": 24, "volume_down": 25}
 
@@ -260,3 +264,221 @@ def media(action):
         raise PhoneError("Media action: play, pause, next, previous, volume_up ya volume_down.")
     key(a)
     return a
+
+
+# ============================================
+# SCREEN PADHNA AUR NAAM SE TAP (uiautomator)
+#   Screen ka XML -> nodes (text/content-desc/resource-id + jagah) -> "Search" jaise naam se tap.
+#   Password wale nodes, lambe (>40 chars) labels aur chhote (1x1) nodes chhupaye jaate hain - AI ko
+#   sirf button/box ke naam dikhte hain, screen ka poora text nahi.
+# ============================================
+UI_XML = "/sdcard/jarvis_ui.xml"          # temp file (dump ke baad turant delete)
+MAX_LABEL = 40                            # isse lamba "label" asli button nahi hota
+_BOUNDS = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
+
+last_list = []        # Aakhri screen listing: [(label, x, y)] - sirf RAM (number se tap ke liye)
+
+
+class Node:
+    """uiautomator XML ka ek UI node: naam (text/content-desc/id) + screen par jagah."""
+
+    __slots__ = ("text", "desc", "rid", "cls", "bounds", "clickable", "scrollable", "secret")
+
+    def __init__(self, attrs):
+        self.text = (attrs.get("text") or "").strip()
+        self.desc = (attrs.get("content-desc") or "").strip()
+        self.rid = (attrs.get("resource-id") or "").strip()
+        self.cls = (attrs.get("class") or "").strip()
+        self.clickable = attrs.get("clickable") == "true"
+        self.scrollable = attrs.get("scrollable") == "true"
+        self.secret = attrs.get("password") == "true"
+        m = _BOUNDS.fullmatch((attrs.get("bounds") or "").strip())
+        self.bounds = tuple(int(v) for v in m.groups()) if m else (0, 0, 0, 0)
+
+    @property
+    def label(self):
+        """Dikhne layak naam: text, warna content-desc, warna resource-id ka aakhri hissa."""
+        raw = self.text or self.desc or (self.rid.rsplit("/", 1)[-1] if self.rid else "")
+        return " ".join(raw.split())[:MAX_LABEL]
+
+    @property
+    def kind(self):
+        """Control ka type (Button/Edit/TextView...) - View/ViewGroup generic hain, chhupaye."""
+        k = self.cls.rsplit(".", 1)[-1]
+        return "" if k in ("", "View", "ViewGroup", "ViewStub", "FrameLayout", "LinearLayout",
+                           "RelativeLayout", "ConstraintLayout", "android.view.View") else k
+
+    @property
+    def center(self):
+        l, t, r, b = self.bounds
+        return (l + r) // 2, (t + b) // 2
+
+    @property
+    def size(self):
+        l, t, r, b = self.bounds
+        return max(0, r - l) * max(0, b - t)
+
+    def line(self, i):
+        return f"{i}. {self.label}" + (f" ({self.kind})" if self.kind else "") + \
+               (", tapne layak" if self.clickable else "")
+
+
+def _clean_xml(raw):
+    """uiautomator ke output se sirf XML part (status line hatao)."""
+    i = raw.find("<?xml")
+    if i < 0:
+        i = raw.find("<hierarchy")
+    if i < 0:
+        return ""
+    k = raw.rfind("</hierarchy>")
+    return raw[i:k + 12] if k > 0 else raw[i:raw.rfind(">") + 1]
+
+
+def dump_xml():
+    """Phone ki screen ka UI XML (string). Pehle /dev/tty, warna /sdcard temp file (padhke delete).
+    Screen lock/off ya dump na mile to PhoneError."""
+    ensure()
+    xml = _clean_xml(_shell("uiautomator", "dump", "/dev/tty"))
+    if not xml:
+        try:
+            _shell("uiautomator", "dump", UI_XML)
+            xml = _clean_xml(_shell("cat", UI_XML))
+        finally:
+            try:
+                _shell("rm", "-f", UI_XML)        # temp file kabhi bache nahi
+            except PhoneError:
+                pass
+    if not xml:
+        raise PhoneError("Screen ka text nahi mila (phone ka screen on ya unlock hona chahiye)")
+    return xml
+
+
+def screen_nodes():
+    """Screen ke UI nodes, upar se neeche (XML order). Password/lambi/1-pixel nodes chhupaye."""
+    try:
+        root = ET.fromstring(dump_xml())
+    except ET.ParseError:
+        raise PhoneError("Screen ka text theek se nahi padha (dobara try karo)")
+    out = []
+    for el in root.iter("node"):
+        n = Node(el.attrib)
+        l, t, r, b = n.bounds
+        if n.secret or r <= l or b <= t or n.size < 100 or not n.label:
+            continue          # password, 1-pixel/zero-size ya be naam ke nodes - chhupaye
+        out.append(n)
+    return out
+
+
+def _score(node, needle):
+    """Bole hue shabd se kitna match: 100+ exact, 50+ andar, 20+ poora shabd. text > content-desc > id."""
+    best = 0
+    for weight, val in ((4, node.text), (3, node.desc), (1, node.rid.rsplit("/", 1)[-1] if node.rid else "")):
+        v = " ".join((val or "").lower().split())
+        if not v:
+            continue
+        if v == needle:
+            best = max(best, 100 + weight)
+        elif needle in v:
+            best = max(best, 50 + weight)
+        elif needle in v.split():
+            best = max(best, 20 + weight)
+    return best
+
+
+def _norm(text):
+    return " ".join((text or "").lower().split())
+
+
+def list_screen(query="", limit=30):
+    """Screen par dikhne wali cheezein (label + type + tapne layak), list bana ke aur `last_list` bharta hai.
+    query diya ho to sirf usi shabd wali cheezein. list_screen("search") -> ['1. Search (Edit), tapne layak']"""
+    global last_list
+    key = _norm(query)
+    picked, seen = [], set()
+    for n in screen_nodes():
+        label = n.label
+        if label.lower() in seen:                 # wahi naam 2 baar mat dikhao
+            continue
+        if key and not (key in label.lower() or any(w in label.lower() for w in key.split() if len(w) > 2)):
+            continue
+        seen.add(label.lower())
+        picked.append(n)
+        if len(picked) >= max(1, int(limit)):
+            break
+    if picked:
+        last_list = [(n.label, *n.center) for n in picked]     # RAM
+    return [n.line(i) for i, n in enumerate(picked, 1)]
+
+
+def _match(label, nodes):
+    """Sabse achha match: (score, clickable, size, -y, node) - chhota list."""
+    key = _norm(label)
+    scored = [t for t in ((_score(n, key), n) for n in nodes) if t[0]]
+    if not scored:
+        return []
+    scored.sort(key=lambda t: (t[0], 1 if t[1].clickable else 0, t[1].size, -t[1].center[1]), reverse=True)
+    return [n for _, n in scored]
+
+
+def resolve_tap(label):
+    """Tap kis cheez pe karna hai: (naam, x, y). Na mile ya do jagah ho to PhoneError (wajah Krish ko bolne layak).
+    Sirf dhoondta hai, tap nahi karta - confirm se pehle naam dikhane ke liye.
+    label number (1, 2, ...) ho to aakhri listing ka uss number wala item (RAM ka `last_list`)."""
+    key = _norm(label)
+    if not key:
+        raise PhoneError("Kya tap karna hai, sir?")
+    if key.isdigit():
+        i = int(key) - 1
+        if not last_list or not 1 <= i < len(last_list):
+            raise PhoneError("Sir, pehle phone ki screen padh lo, phir number bolo.")
+        return last_list[i]
+    nodes = screen_nodes()
+    if not nodes:
+        raise PhoneError("Sir, phone ki screen ka text nahi mila (screen on ya unlock karo).")
+    best = _match(key, nodes)
+    if not best:
+        raise PhoneError(f"Sir, phone ki screen pe '{label}' nahi mila.")
+    if len(best) > 1 and _score(best[0], key) == _score(best[1], key):
+        raise PhoneError(f"Sir, '{label}' screen pe 2 jagah dikh raha hai ({best[0].label} aur "
+                         f"{best[1].label}). Thoda aur batao ya screen padh ke number bolo.")
+    x, y = best[0].center
+    return best[0].label, x, y
+
+
+def tap_text(label):
+    """Naam de ke tap: pehle naam dhoondo (bina coordinates ke), phir usi ki jagah tap.
+    (naam, x, y) wapas - confirm mein naam dikhane ke liye."""
+    name, x, y = resolve_tap(label)
+    tap(x, y)
+    return name, x, y
+
+
+DIRECTIONS = ("down", "up", "left", "right")
+_DIR_WORDS = {"neeche": "down", "upar": "up", "left": "left", "right": "right", "aage": "down", "peeche": "up",
+              "neeche_kar": "down", "upar_kar": "up", "scroll_down": "down", "scroll_up": "up"}
+
+
+def scroll_direction(direction):
+    """'neeche scroll karo' jaisi baat ko 'down'/'up'/'left'/'right' mein badal do (validate bhi)."""
+    a = re.sub(r"[^a-z]+", "_", _norm(direction)).strip("_")
+    a = _DIR_WORDS.get(a, a)
+    if a not in DIRECTIONS:
+        raise PhoneError("Scroll direction: down (neeche), up (upar), left ya right, sir.")
+    return a
+
+
+def swipe(direction):
+    """Screen ko ek haath ki safar jaisa scroll karo. direction = content kis taraf jayega:
+    'down' = neeche ka content (ungli upar), 'up' = upar ka content, 'left'/'right' = side."""
+    d = scroll_direction(direction)
+    ensure()
+    guard_foreground()
+    w, h = screen_size()
+    cx, cy = w // 2, h // 2
+    far_x, far_y = int(w * 0.75), int(h * 0.75)
+    near_x, near_y = int(w * 0.25), int(h * 0.25)
+    moves = {"down": (cx, far_y, cx, near_y), "up": (cx, near_y, cx, far_y),
+             "left": (far_x, cy, near_x, cy), "right": (near_x, cy, far_x, cy)}
+    x1, y1, x2, y2 = moves[d]
+    _shell("input", "swipe", str(x1), str(y1), str(x2), str(y2), "300")
+    return d

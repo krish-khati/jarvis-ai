@@ -24,6 +24,27 @@ PKGS = "\n".join("package:" + p for p in ["com.whatsapp", "com.google.android.yo
                                           "com.android.settings", "com.instagram.android",
                                           "com.sec.android.app.camera", "com.android.dialer"])
 FOCUS = ["com.whatsapp"]
+TTY_OK = [True]             # kuch devices par /dev/tty se dump nahi milta (sdcard wala raasta)
+
+# Nakli screen: YouTube search page. Do "Search" buttons (ambiguity test), ek password box, 1x1 node.
+UI_XML = (
+    'UI hierchary dumped to: /dev/tty\n'
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<hierarchy rotation="0">'
+    '<node class="android.widget.FrameLayout" package="com.google.android.youtube" bounds="[0,0][1080,2400]">'
+    '<node text="" content-desc="Search" resource-id="com.google.android.youtube:id/search_box" '
+    'class="android.widget.EditText" clickable="true" bounds="[40,120][1040,220]"/>'
+    '<node text="Search" content-desc="" resource-id="com.google.android.youtube:id/search_submit" '
+    'class="android.widget.Button" clickable="true" bounds="[1000,600][1070,700]"/>'
+    '<node text="Search" content-desc="" resource-id="com.google.android.youtube:id/search_submit2" '
+    'class="android.widget.Button" clickable="true" bounds="[1000,800][1070,900]"/>'
+    '<node text="Trending" content-desc="" resource-id="" class="android.widget.TextView" '
+    'clickable="true" bounds="[40,300][400,380]"/>'
+    '<node text="hunter2" content-desc="" resource-id="login_password" class="android.widget.EditText" '
+    'password="true" bounds="[40,400][500,460]"/>'
+    '<node text="" content-desc="" resource-id="dot" class="android.view.View" bounds="[5,5][6,6]"/>'
+    "</node></hierarchy>UI hierchary dumped to: /dev/tty"
+)
 
 
 def fake_adb(args, binary=False, timeout=8):
@@ -41,6 +62,12 @@ def fake_adb(args, binary=False, timeout=8):
         return "Physical size: 1080x2400"
     if "screencap" in cmd:
         return b"\x89PNG\r\n" + b"0" * 20
+    if "uiautomator dump /dev/tty" in cmd:
+        return UI_XML if TTY_OK[0] else "UI hierchary dumped to: /dev/tty\n"
+    if "cat /sdcard/jarvis_ui.xml" in cmd:      # /dev/tty fail hone wala device
+        return UI_XML
+    if "uiautomator dump" in cmd and "/dev/tty" not in cmd:
+        return "UI hierchary dumped to: " + cmd.split()[-1]
     return "ok"
 
 
@@ -71,11 +98,12 @@ def say(ans):
 
 # --- tools ki ginti / risk ---
 names = {f.__name__ for f in tools.ALL_TOOLS}
-check("52 tools, risk table match", len(names) == 52 and names == set(permissions.RISK))
+check("56 tools, risk table match", len(names) == 56 and names == set(permissions.RISK))
 check("brain copy same", set(brain.TOOLS_BY_NAME) == names)
-check("phone SAFE 2 / CONFIRM 6",
-      all(permissions.risk(n) == "SAFE" for n in ("phone_status", "phone_screenshot"))
+check("phone SAFE 3 / CONFIRM 9",
+      all(permissions.risk(n) == "SAFE" for n in ("phone_status", "phone_screenshot", "phone_read_screen"))
       and all(permissions.risk(n) == "CONFIRM" for n in ("phone_open_app", "phone_type", "phone_tap",
+                                                          "phone_tap_text", "phone_scroll", "phone_enter",
                                                           "phone_back", "phone_home", "phone_media")))
 check("NEVER tool banaya hi nahi",
       not [n for n in names if n.startswith("phone_")
@@ -142,7 +170,8 @@ except phone.PhoneError:
     check("media anjaan = error", True)
 FOCUS[0] = "com.phonepe.app"
 for label, f in (("type", lambda: phone.type_text("x")), ("tap", lambda: phone.tap(1, 1)),
-                 ("back", lambda: phone.key("back"))):
+                 ("back", lambda: phone.key("back")), ("tap_text", lambda: phone.tap_text("Trending")),
+                 ("scroll", lambda: phone.swipe("down")), ("enter", lambda: phone.key("enter"))):
     try:
         f()
         check(f"payment app foreground: {label} band", False)
@@ -156,6 +185,101 @@ check("screenshot", "HUD pe" in run(tools.phone_screenshot, "phone ka screenshot
       and tools.phone_last_image.startswith(b"\x89PNG"))
 check("screenshot untrusted + incoming", "phone_screenshot" in permissions.UNTRUSTED_SOURCES
       and "phone_screenshot" in permissions.INCOMING_MESSAGE_TOOLS)
+
+# --- screen padhna (nakli uiautomator XML) ---
+nodes = phone.screen_nodes()
+check("dump: nodes (password + 1px chhupaye)", len(nodes) == 4 and not any("hunter2" in n.label for n in nodes))
+check("node: center + control type", nodes[0].center == (540, 170) and nodes[0].kind == "EditText")
+lines = phone.list_screen()
+check("list_screen: numbered list + 'tapne layak'",
+      lines == ["1. Search (EditText), tapne layak", "2. Trending (TextView), tapne layak"])
+check("list_screen: number se tap (RAM ki listing)", phone.resolve_tap("2") == ("Trending", 220, 340))
+try:
+    phone.resolve_tap("9")
+    check("resolve_tap: listing se bahar = error", False)
+except phone.PhoneError as e:
+    check("resolve_tap: listing se bahar = error", "pehle phone ki screen padh lo" in str(e))
+calls.clear()
+check("list_screen: query filter", phone.list_screen("trending") == ["1. Trending (TextView), tapne layak"])
+calls.clear()
+name, x, y = phone.tap_text("Trending")
+check("tap_text: naam dhoondha, usi ki jagah tap",
+      name == "Trending" and calls[-1][-3:] == ["tap", "220", "340"]
+      and any("uiautomator" in " ".join(c) for c in calls))
+calls.clear()
+try:
+    phone.tap_text("Cart")
+    check("tap_text: naam nahi mila = error", False)
+except phone.PhoneError as e:
+    check("tap_text: naam nahi mila = error", "nahi mila" in str(e) and not acted())
+try:
+    phone.tap_text("Search")
+    check("tap_text: 2 jagah = pehle poochhe", False)
+except phone.PhoneError as e:
+    check("tap_text: 2 jagah = pehle poochhe", "2 jagah" in str(e) and not acted())
+calls.clear()
+check("swipe: neeche = ungli upar", phone.swipe("neeche") == "down"
+      and calls[-1][-6:-1] == ["swipe", "540", "1800", "540", "600"] and calls[-1][-1] == "300")
+calls.clear()
+phone.swipe("upar")
+check("swipe: upar = ungli neeche", calls[-1][-6:-1] == ["swipe", "540", "600", "540", "1800"])
+try:
+    phone.scroll_direction("sideways")
+    check("swipe: anjaan direction = error", False)
+except phone.PhoneError:
+    check("swipe: anjaan direction = error", True)
+calls.clear(); TTY_OK[0] = False
+fallback = phone.list_screen()
+TTY_OK[0] = True
+check("dump: /dev/tty na mile to /sdcard temp + delete",
+      fallback == lines and any("cat " + phone.UI_XML in " ".join(c) for c in calls)
+      and any("rm -f " + phone.UI_XML in " ".join(c) for c in calls))
+
+# --- tools: screen padhna / naam se tap / scroll / enter ---
+tools.private_reply = False
+r = run(tools.phone_read_screen, "phone pe kya khula hai")
+check("read_screen: list + private (terminal pe nahi)", "1. Search" in r and tools.private_reply)
+r = run(tools.phone_read_screen, "phone pe search button hai", "search")
+check("read_screen: query filter", "Search" in r and "Trending" not in r)
+r = run(tools.phone_read_screen, "phone pe cart hai", "cart")
+check("read_screen: kuch nahi mila", "nahi dikha" in r and not r.startswith("RESULT"))
+calls.clear(); asked.clear(); say(False)
+r = run(tools.phone_tap_text, "phone pe trending pe tap karo", "Trending")
+check("tap_text: confirm mein naam + nahi = kuch nahi",
+      asked and "Trending" in asked[0] and "nahi kiya" in r and not acted())
+say(True)
+r = run(tools.phone_tap_text, "phone pe trending pe tap karo", "Trending")
+check("tap_text: haan + DRY_RUN = tap nahi", "Test mode" in r and not acted())
+for fn, args, req in ((tools.phone_scroll, ("down",), "phone pe neeche scroll karo"),
+                      (tools.phone_enter, (), "phone pe enter dabao")):
+    calls.clear(); asked.clear(); say(False)
+    r1 = run(fn, req, *args)
+    say(True)
+    r2 = run(fn, req, *args)
+    check(f"{fn.__name__}: confirm + DRY_RUN", "nahi kiya" in r1 and "Test mode" in r2 and not acted() and len(asked) == 2)
+calls.clear(); asked.clear()
+r = run(tools.phone_scroll, "phone pe scroll karo", "sideways")
+check("scroll: galat direction, confirm bhi nahi",
+      not asked and not acted() and "down (neeche), up (upar), left ya right" in r)
+calls.clear(); asked.clear()
+r = run(tools.phone_tap_text, "phone pe search pe tap karo", "Search")
+check("tap_text: 2 jagah tool se bhi poochhe (confirm nahi)", not asked and "2 jagah" in r and not acted())
+calls.clear()
+r = run(tools.phone_enter, "phone pe enter dabao")
+check("enter: DRY_RUN mein Enter nahi", "Test mode" in r and not acted())
+
+# --- Guard: screen padhne ke baad koi action nahi ---
+g4 = permissions.Guard(confirm=lambda q: True)
+tools.current_request = "phone pe kya khula hai"
+st, txt = g4.run("phone_read_screen")
+check("guard: read screen SAFE + UNTRUSTED label",
+      st == "ok" and "UNTRUSTED DATA from phone screen" in txt and "1. Search" in txt)
+tools.current_request = "phone pe trending pe tap karo"
+check("guard: screen padhne ke baad tap block", g4.run("phone_tap_text", label="Trending")[0] == "blocked")
+check("guard: read screen bhi UNTRUSTED + incoming",
+      "phone_read_screen" in permissions.UNTRUSTED_SOURCES
+      and "phone_read_screen" in permissions.INCOMING_MESSAGE_TOOLS
+      and {"phone_tap_text", "phone_scroll", "phone_enter"} <= permissions.SELF_CONFIRMING)
 
 # --- address: sirf ghar ka WiFi ---
 for addr, ok in (("192.168.1.5:5555", True), ("10.0.0.2:4000", True), ("8.8.8.8:5555", False),
@@ -213,6 +337,9 @@ tools.current_request = "mausam batao"
 tools.get_weather("")
 check("weather: shahar khali = BRIEFING_CITY", seen.get("city") == "Kaithal")
 check("groq schema: city required nahi", brain._SCHEMA_BY_NAME["get_weather"]["function"]["parameters"]["required"] == [])
+check("groq schema: naye phone tools", brain._SCHEMA_BY_NAME["phone_tap_text"]["function"]["parameters"]["required"] == ["label"]
+      and brain._SCHEMA_BY_NAME["phone_read_screen"]["function"]["parameters"]["required"] == []
+      and brain._SCHEMA_BY_NAME["phone_enter"]["function"]["parameters"]["required"] == [])
 
 print("\nFAILS:", fails)
 raise SystemExit(1 if fails else 0)
