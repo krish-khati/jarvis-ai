@@ -70,9 +70,9 @@ def _target():
     return addr
 
 
-def _shell(*parts, binary=False):
+def _shell(*parts, binary=False, timeout=TIMEOUT):
     """`adb -s <phone> shell <parts>` - parts sirf is file ke fixed templates se aate hain."""
-    return _adb(["-s", _target(), "exec-out" if binary else "shell", *parts], binary=binary)
+    return _adb(["-s", _target(), "exec-out" if binary else "shell", *parts], binary=binary, timeout=timeout)
 
 
 def connect():
@@ -163,19 +163,31 @@ def resolve_app(name):
     return pkg, None
 
 
-def foreground_package():
+def foreground_package(dump=None):
     """Abhi screen pe kaunsa app hai (package). Na mile to ''."""
-    try:
-        out = _shell("dumpsys", "window")
-    except PhoneError:
-        raise
+    out = dump if dump is not None else _shell("dumpsys", "window")
     m = re.search(r"mCurrentFocus=.*?\{[^}]*?\s([\w.]+)/", out) or re.search(r"mFocusedApp=.*?\s([\w.]+)/", out)
     return m[1] if m else ""
 
 
-def guard_foreground():
+def screen_state(dump=None):
+    """(screen_on, locked): uiautomator sirf tab asli screen dikhata hai jab screen on aur unlock ho."""
+    out = dump if dump is not None else _shell("dumpsys", "window")
+    return not re.search(r"\bmAwake=false\b", out), bool(re.search(r"mDreamingLockscreen=true", out))
+
+
+def guard_screen(dump=None):
+    """Screen off ya lock hai to PhoneError (tab tap/type ka koi matlab nahi - chup-chaap fail na ho)."""
+    on, locked = screen_state(dump)
+    if not on:
+        raise PhoneError("Phone ka screen off hai, sir (on karke phir boliye).")
+    if locked:
+        raise PhoneError("Phone ka screen lock hai, sir (unlock karke phir boliye).")
+
+
+def guard_foreground(dump=None):
     """Payment/bank/dialer/settings jaise app screen pe ho to tap/type/media band (PhoneError)."""
-    pkg = foreground_package()
+    pkg = foreground_package(dump)
     if pkg and is_blocked(pkg):
         raise PhoneError("Is waqt phone pe sensitive app khula hai (payment/settings/calls), sir. "
                          "Isme main kuch nahi karunga.")
@@ -228,13 +240,17 @@ def type_text(text):
     if not valid_text(text):
         raise PhoneError("Sirf English letters, numbers aur simple punctuation type kar sakta hoon (200 tak), sir.")
     ensure()
-    guard_foreground()
+    dump = _shell("dumpsys", "window")     # ek hi dump: screen state + foreground app
+    guard_screen(dump)
+    guard_foreground(dump)
     _shell("input", "text", text.replace(" ", "%s"))
 
 
 def tap(x, y):
     ensure()
-    guard_foreground()
+    dump = _shell("dumpsys", "window")     # ek hi dump: screen state + foreground app
+    guard_screen(dump)
+    guard_foreground(dump)
     w, h = screen_size()
     if not (0 <= int(x) < w and 0 <= int(y) < h):
         raise PhoneError(f"Tap screen ke andar hona chahiye (0-{w - 1}, 0-{h - 1}), sir.")
@@ -251,7 +267,9 @@ def key(name):
         raise PhoneError("Ye key allowed nahi hai")
     ensure()
     if name not in ("home",):
-        guard_foreground()
+        dump = _shell("dumpsys", "window")
+        guard_screen(dump)
+        guard_foreground(dump)
     _shell("input", "keyevent", str(KEYS[name]))
 
 
@@ -302,6 +320,17 @@ class Node:
         return " ".join(raw.split())[:MAX_LABEL]
 
     @property
+    def from_id(self):
+        """Sirf resource-id se bana naam (text/content-desc khaali) - aksar layout container jaisa bekaar naam."""
+        return not (self.text or self.desc)
+
+    @property
+    def tappable(self):
+        """Control hai jo user chhoo sakta hai (ya text daalne wala box)."""
+        return self.clickable or self.kind in ("EditText", "CheckBox", "RadioButton", "ToggleButton",
+                                               "SeekBar", "Switch")
+
+    @property
     def kind(self):
         """Control ka type (Button/Edit/TextView...) - View/ViewGroup generic hain, chhupaye."""
         k = self.cls.rsplit(".", 1)[-1]
@@ -334,18 +363,21 @@ def _clean_xml(raw):
     return raw[i:k + 12] if k > 0 else raw[i:raw.rfind(">") + 1]
 
 
+DUMP_TIMEOUT = 25      # uiautomator dump asli phone par 8-10 s le sakta hai
+
+
 def dump_xml():
     """Phone ki screen ka UI XML (string). Pehle /dev/tty, warna /sdcard temp file (padhke delete).
     Screen lock/off ya dump na mile to PhoneError."""
     ensure()
-    xml = _clean_xml(_shell("uiautomator", "dump", "/dev/tty"))
+    xml = _clean_xml(_shell("uiautomator", "dump", "/dev/tty", timeout=DUMP_TIMEOUT))
     if not xml:
         try:
-            _shell("uiautomator", "dump", UI_XML)
-            xml = _clean_xml(_shell("cat", UI_XML))
+            _shell("uiautomator", "dump", UI_XML, timeout=DUMP_TIMEOUT)
+            xml = _clean_xml(_shell("cat", UI_XML, timeout=DUMP_TIMEOUT))
         finally:
             try:
-                _shell("rm", "-f", UI_XML)        # temp file kabhi bache nahi
+                _shell("rm", "-f", UI_XML)        # temp file kabhi bachta nahi
             except PhoneError:
                 pass
     if not xml:
@@ -354,18 +386,25 @@ def dump_xml():
 
 
 def screen_nodes():
-    """Screen ke UI nodes, upar se neeche (XML order). Password/lambi/1-pixel nodes chhupaye."""
+    """Screen ke UI nodes, upar se neeche (XML order). Chhupaye jaate hain: password nodes, 1-pixel/zero-size,
+    be-laal nodes, aur sirf resource-id wale bekaar container (jaise app_bar/coordinator) - sirf buttons,
+    boxes aur text wahi chhupaye nahi jaate."""
     try:
         root = ET.fromstring(dump_xml())
     except ET.ParseError:
         raise PhoneError("Screen ka text theek se nahi padha (dobara try karo)")
+    guard_screen()          # dump lock screen ka dikhta hai - asli screen tabhi, jab on + unlock ho
     out = []
     for el in root.iter("node"):
         n = Node(el.attrib)
         l, t, r, b = n.bounds
         if n.secret or r <= l or b <= t or n.size < 100 or not n.label:
-            continue          # password, 1-pixel/zero-size ya be naam ke nodes - chhupaye
+            continue
+        if n.from_id and not n.tappable:
+            continue
         out.append(n)
+    if not out:
+        raise PhoneError("Screen pe koi button ya text nahi dikha (screen lock ho sakta hai)")
     return out
 
 
@@ -472,7 +511,9 @@ def swipe(direction):
     'down' = neeche ka content (ungli upar), 'up' = upar ka content, 'left'/'right' = side."""
     d = scroll_direction(direction)
     ensure()
-    guard_foreground()
+    dump = _shell("dumpsys", "window")
+    guard_screen(dump)
+    guard_foreground(dump)
     w, h = screen_size()
     cx, cy = w // 2, h // 2
     far_x, far_y = int(w * 0.75), int(h * 0.75)

@@ -24,6 +24,7 @@ PKGS = "\n".join("package:" + p for p in ["com.whatsapp", "com.google.android.yo
                                           "com.android.settings", "com.instagram.android",
                                           "com.sec.android.app.camera", "com.android.dialer"])
 FOCUS = ["com.whatsapp"]
+SCREEN = ["on"]            # "on" / "off" / "lock" (uiautomator lock screen pe sirf status dikhata hai)
 TTY_OK = [True]             # kuch devices par /dev/tty se dump nahi milta (sdcard wala raasta)
 
 # Nakli screen: YouTube search page. Do "Search" buttons (ambiguity test), ek password box, 1x1 node.
@@ -57,7 +58,9 @@ def fake_adb(args, binary=False, timeout=8):
     if "pm list packages" in cmd:
         return PKGS
     if "dumpsys window" in cmd:
-        return "mCurrentFocus=Window{abc u0 %s/com.x.Main}" % FOCUS[0]
+        state = "mAwake=false mScreenOnFully=false" if SCREEN[0] == "off" else \
+                ("mDreamingLockscreen=true mIsShowing=true" if SCREEN[0] == "lock" else "mAwake=true")
+        return f"mCurrentFocus=Window{{abc u0 %s/com.x.Main}}\n{state}\n" % FOCUS[0]
     if "wm size" in cmd:
         return "Physical size: 1080x2400"
     if "screencap" in cmd:
@@ -234,6 +237,21 @@ TTY_OK[0] = True
 check("dump: /dev/tty na mile to /sdcard temp + delete",
       fallback == lines and any("cat " + phone.UI_XML in " ".join(c) for c in calls)
       and any("rm -f " + phone.UI_XML in " ".join(c) for c in calls))
+
+# --- screen off / lock: sab kuch chup-chaap fail na ho, saaf message ---
+for state, word in (("off", "screen off hai"), ("lock", "screen lock hai")):
+    SCREEN[0] = state
+    calls.clear()
+    for label, f in (("screen_nodes", lambda: phone.screen_nodes()), ("tap", lambda: phone.tap(1, 1)),
+                     ("type", lambda: phone.type_text("hi")), ("swipe", lambda: phone.swipe("down")),
+                     ("enter", lambda: phone.key("enter")), ("tap_text", lambda: phone.tap_text("Trending"))):
+        try:
+            f()
+            check(f"{state}: {label} refuse", False)
+        except phone.PhoneError as e:
+            check(f"{state}: {label} refuse", word in str(e) and not acted())
+SCREEN[0] = "on"
+check("screen on: sab chalta hai", phone.tap(1, 1) is None)
 
 # --- tools: screen padhna / naam se tap / scroll / enter ---
 tools.private_reply = False
