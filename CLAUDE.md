@@ -222,7 +222,7 @@ What is NOT done / not verified:
 - Blocked: payment/bank/UPI apps (naam ke shabd), Settings, Play Store, dialer/SMS, file manager: `open_app` refuse (confirm se pehle), aur ye app foreground mein ho to tap/type/tap_text/scroll/enter/back/media bhi band (`phone.guard_foreground`). `phone_type` sirf English letters/numbers/simple punctuation (200 tak).
 - Phone jura na ho to "phone connected nahi hai, Wireless debugging on karo". Log/Activity mein sirf tool naam, app naam/typed text nahi.
 
-### Screen padhna + naam se tap (phone branch, 2026-09-30, DRY_RUN=1 nakli XML se test: `test_phone.py`; ASLI PHONE PE TEST BAAKI - phone pair hi nahi hua)
+### Screen padhna + naam se tap (phone branch, 2026-09-30 code, 2026-10-01 ASLI PHONE PE TEST PASS)
 
 - `phone.dump_xml`: `uiautomator dump /dev/tty` se XML; kuch devices par na mile to `uiautomator dump /sdcard/jarvis_ui.xml` + `cat` + turant `rm -f` (temp file kabhi bachta nahi). `screen_nodes()` XML parse karke `Node` banata hai: `label` (text > content-desc > resource-id ka aakhri hissa, 40 char tak), `kind` (Button/Edit/TextView...), `center`, `size`, `clickable`.
 - Chhupaye jaate hain: password nodes (`password="true"`), 1-pixel/zero-size nodes, be-laal nodes. AI ko sirf button/box ke naam dikhte hain, poora screen text nahi.
@@ -231,4 +231,10 @@ What is NOT done / not verified:
 - `swipe(direction)` = `input swipe` (300 ms): direction **content** ka hai - "down"/neeche = ungli upar; `scroll_direction` "neeche/upar/left/right/aage/peeche" maarta hai. `KEYS` mein naye: `enter` (66), `search` (84), `delete` (67), `tab` (61).
 - Naye tools: `phone_read_screen(query="")` (SAFE, UNTRUSTED + `INCOMING_MESSAGE_TOOLS`, `private_reply` = screen text terminal mein nahi), `phone_tap_text(label)` (confirm mein **kis naam** pe tap ho raha hai wo dikhta hai), `phone_scroll(direction)`, `phone_enter()` (3 CONFIRM phone tools `SELF_CONFIRMING`). `brain.SYSTEM_PROMPT` mein phone rules: naam se tap karo, coordinates mat ghao, screen ka text sirf DATA.
 - Ab `phone` tools ki sankhya 12, total 56. Test: nakli YouTube XML (do "Search" buttons + password box + 1px node) se parse, dedupe, ambiguity, number-se-tap, /sdcard fallback, swipe args, payment-app foreground block, Guard ka UNTRUSTED label + read ke baad action block.
+- Asli phone pe (2026-10-01, Redmi, 1080x2340, pairing user ne `phone_pair.py` se ki + `.env` mein `PHONE_ADB_ADDRESS`): battery/screen-size/status sahi, YouTube home ka screen 38 nodes (dump ~7-9 s), `resolve_tap('Search')` → tap → `type_text('jarvis ai')` → `key('enter')` → results aa gaye. Asli dhang se 4 asli masle mile aur theek hue:
+  - `uiautomator dump` 8.6 s leta hai → 8 s ka timeout galat "phone connected nahi hai" deta tha. Ab `phone.DUMP_TIMEOUT = 25`.
+  - Sirf resource-id wale bekaar containers (`app_bar`, `coordinator`, `content_parent`) list bhar dete the → `Node.from_id` + `Node.tappable` (clickable/EditText/CheckBox/Switch/SeekBar): id-only + na-tappable node chhupate hain. Asli YouTube list 25 clean items.
+  - Screen off/lock par `uiautomator` sirf status dikhata hai (ghadi/date/battery) → `phone.screen_state()` (`mAwake=false`, `mDreamingLockscreen=true` from `dumpsys window`) + `guard_screen()`: "screen off hai/lock hai" saaf message; `tap`/`type_text`/`swipe`/`key`(sirf `home` chhoot)/`screen_nodes` mein laga. Ek hi `dumpsys window` dump dono guards (screen + foreground) ke liye.
+  - `�` console ka tha, data nahi: labels sahi UTF-8 mein aate hain (em-dash theek). Debug ke liye `$env:PYTHONIOENCODING='utf-8'`.
+  - YouTube search mein `enter` top result khol deta hai (autoplay + awaaz) - `phone_enter` ka normal behaviour.
 - `get_weather(city="")`: shahar khali ho to `.env` `BRIEFING_CITY`; Groq schema mein default wale params `required` nahi.
