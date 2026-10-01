@@ -19,6 +19,7 @@ def text_confirm(question):
 
 
 tools.confirm = text_confirm
+tools.source = "typed"     # text mode = type karke hi poocha hai (phone PIN jaise commands yahi maante hain)
 
 
 def text_ask(question):

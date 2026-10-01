@@ -9,12 +9,14 @@
 #   - Screen ka text `uiautomator dump` se padhte hain (password wale nodes chhupaye), phir button/box ke
 #     NAAM se tap hota hai - coordinates bolne ki zaroorat nahi. Dump XML RAM mein hai (phone par /sdcard
 #     par temp file turant delete ho jaati hai).
+#   - Screen off/lock: `wake`/`lock`/`unlock` (PIN RAM ya .env PHONE_UNLOCK_PIN mein; kabhi print/log nahi).
 #   Tests `_adb` ko fake karte hain (ek hi jagah jahan se adb chalta hai).
 # ============================================
 import ipaddress
 import os
 import re
 import subprocess
+import time
 import xml.etree.ElementTree as ET
 
 from dotenv import load_dotenv
@@ -182,7 +184,8 @@ def guard_screen(dump=None):
     if not on:
         raise PhoneError("Phone ka screen off hai, sir (on karke phir boliye).")
     if locked:
-        raise PhoneError("Phone ka screen lock hai, sir (unlock karke phir boliye).")
+        hint = " (ya 'phone unlock kar do' boliye)" if pin_ready() else ""
+        raise PhoneError(f"Phone ka screen lock hai, sir (unlock karke phir boliye{hint}).")
 
 
 def guard_foreground(dump=None):
@@ -523,3 +526,179 @@ def swipe(direction):
     x1, y1, x2, y2 = moves[d]
     _shell("input", "swipe", str(x1), str(y1), str(x2), str(y2), "300")
     return d
+
+
+# ============================================
+# SCREEN ON/OFF AUR UNLOCK (PIN)
+#   - PIN sirf do jagah: RAM (type karke "phone pin 1234") ya .env mein PHONE_UNLOCK_PIN (gitignored).
+#     Kabhi print/log/UI mein nahi, aur bolke (voice) PIN kabhi set nahi hota.
+#   - Unlock: screen jage (WAKEUP) -> lockscreen upar swipe -> PIN ke digits (KEYCODE_0..9) -> Enter,
+#     phir `dumpsys window` se verify ki sach mein khula ya nahi.
+#   - SAFETY: phone 5 galat PIN par khud 30 s ke liye lock ho jaata hai (10 par data wipe ka risk), isliye
+#     ek call mein MAX 2 try, aur galat jaane par PIN_COOLDOWN (5 min) tak koi try nahi.
+#   - Pattern/face/fingerprint lock ho to PIN se nahi khulega - saaf message milta hai (data wipe se bachao).
+# ============================================
+PIN_RX = re.compile(r"\d{4,10}")
+_DIGIT_KEYS = {str(d): 7 + d for d in range(10)}       # KEYCODE_0 = 7 ... KEYCODE_9 = 16
+ENV_FILE = os.path.join(BASE, ".env")
+ENV_KEY = "PHONE_UNLOCK_PIN"
+
+_PIN = None             # RAM wala PIN (type karke set kiya hua) - None = env dekho
+_PIN_UNTIL = 0.0        # is time tak unlock try band (galat PIN ke baad)
+_PIN_VIA_TEXT = False   # keyevent se PIN na chala to agli baar `input text` se
+UNLOCK_WAIT = 3.0       # PIN ke baad khulne ka intezaar (kuch phone 1-2 s lete hain)
+
+
+def clean_pin(pin):
+    """Sirf 4-10 ka number (space/dash hata ke). Pattern/letter wala PIN support nahi hai."""
+    p = re.sub(r"[\s\-]", "", str(pin or ""))
+    return p if PIN_RX.fullmatch(p) else ""
+
+
+def _env_pin():
+    """.env se PIN (gitignored file, kabhi print nahi)."""
+    try:
+        with open(ENV_FILE, encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith(ENV_KEY + "="):
+                    return clean_pin(line.split("=", 1)[1].strip())
+    except OSError:
+        pass
+    return ""
+
+
+def pin_ready():
+    """Unlock karne layak PIN hai (RAM ya .env)?"""
+    return bool((_PIN or _env_pin()))
+
+
+def pin_set(pin, save=False):
+    """PIN yaad rakho. Sirf type karke call hota hai (PIN awaaz pe set nahi hota).
+    save=False -> sirf is session (RAM); save=True -> .env mein bhi (gitignored, restart ke baad bhi rahe)."""
+    global _PIN, _PIN_UNTIL, _PIN_VIA_TEXT
+    p = clean_pin(pin)
+    if not p:
+        raise PhoneError("Sir, PIN 4 se 10 ka number hona chahiye.")
+    if save:
+        _env_write(p)
+    _PIN, _PIN_UNTIL, _PIN_VIA_TEXT = p, 0.0, False
+    return True
+
+
+def pin_forget(save=False):
+    """PIN hatao (RAM se, aur kahi se bhi)."""
+    global _PIN, _PIN_UNTIL, _PIN_VIA_TEXT
+    _PIN, _PIN_UNTIL, _PIN_VIA_TEXT = None, 0.0, False
+    if save:
+        _env_write("")
+    return True
+
+
+def _env_write(pin):
+    """.env mein PHONE_UNLOCK_PIN line badlo (ya hata do). PIN kabhi print nahi."""
+    lines = []
+    try:
+        with open(ENV_FILE, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise PhoneError(".env nahi mila, sir")
+    new, done = [], False
+    for line in lines:
+        if line.strip().startswith(ENV_KEY + "="):
+            if not done and pin:
+                new.append(f"{ENV_KEY}={pin}")
+            done = True
+        else:
+            new.append(line)
+    if not done and pin:
+        new.append(f"{ENV_KEY}={pin}")
+    tmp = ENV_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(new) + "\n")
+    os.replace(tmp, ENV_FILE)
+
+
+def wake():
+    """Screen jaga de (KEYCODE_WAKEUP). Locked ho tab bhi chalta hai - yahi to unlock ka pehla kaam hai."""
+    ensure()
+    _shell("input", "keyevent", "26")
+    return True
+
+
+def sleep_screen():
+    """Screen band (KEYCODE_SLEEP) - phone asal mein lock ho jaata hai."""
+    ensure()
+    _shell("input", "keyevent", "223")
+    return True
+
+
+def lock():
+    """Phone lock: screen band kar do (PIN chahiye tab khulne ke liye)."""
+    return sleep_screen()
+
+
+def _unlocked_now():
+    """Abhi screen on hai aur lock band hai (dumpsys window)."""
+    on, locked = screen_state()
+    return on and not locked
+
+
+def _wait_unlocked(seconds=UNLOCK_WAIT):
+    """PIN ke baad khulne ka intezaar (kuch phone 1-2 s lete hain)."""
+    end = time.time() + seconds
+    while True:
+        if _unlocked_now():
+            return True
+        if time.time() >= end:
+            return False
+        time.sleep(0.2)
+
+
+def _type_pin(pin):
+    """PIN ke digits daalo: pehle KEYCODE (zyada chalta hai), warna `input text` (kuch ROM sirf yahi lete hain)."""
+    global _PIN_VIA_TEXT
+    if not _PIN_VIA_TEXT:
+        for ch in pin:
+            _shell("input", "keyevent", str(_DIGIT_KEYS[ch]))
+            time.sleep(0.12)
+        _shell("input", "keyevent", "66")     # ENTER
+        if _wait_unlocked():
+            return True
+        _PIN_VIA_TEXT = True                  # agli baar `input text` se try
+    _shell("input", "text", pin)
+    _shell("input", "keyevent", "66")
+    return _wait_unlocked()
+
+
+def unlock():
+    """Phone ka lock kholo: screen jage, upar swipe, PIN daalo, verify karo.
+    True = khul gaya. Galat PIN par PhoneError (5 min ka cooldown - phone khud 5 galtiyon par band kar deta hai)."""
+    global _PIN_UNTIL
+    pin = _PIN or _env_pin()
+    if not pin:
+        raise PhoneError("Phone ka PIN set nahi hai, sir (HUD mein type karein: phone pin <4-10 ka number>)")
+    if time.time() < _PIN_UNTIL:
+        raise PhoneError("PIN galat tha sir, isliye thodi der ruka hoon (phone khud galat PIN par lock ho jaata hai)")
+    ensure()
+    if not screen_state()[0]:                  # screen off hai to jage (WAKEUP)
+        wake()
+        end = time.time() + 3.0
+        while not screen_state()[0] and time.time() < end:
+            time.sleep(0.5)
+        if not screen_state()[0]:
+            raise PhoneError("Phone ka screen jagne nahi lag raha, sir (phone ka power button daba ke dekhiye)")
+    if _unlocked_now():
+        return True                                   # pehle se khula hai
+    for _ in range(2):                               # MAX 2 try (loop kabhi nahi)
+        w, h = screen_size()
+        _shell("input", "swipe", str(w // 2), str(int(h * 0.85)), str(w // 2), str(int(h * 0.3)), "200")
+        time.sleep(0.7)
+        if _type_pin(pin):
+            return True
+    _PIN_UNTIL = time.time() + PIN_COOLDOWN
+    raise PhoneError("PIN se khul nahi paya, sir (shayad phone par pattern/face lock hai, ya PIN galat hai)")
+
+
+PIN_COOLDOWN = 300      # galat ke baad 5 min tak dubara try nahi

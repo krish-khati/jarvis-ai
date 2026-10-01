@@ -101,13 +101,14 @@ def say(ans):
 
 # --- tools ki ginti / risk ---
 names = {f.__name__ for f in tools.ALL_TOOLS}
-check("56 tools, risk table match", len(names) == 56 and names == set(permissions.RISK))
+check("59 tools, risk table match", len(names) == 59 and names == set(permissions.RISK))
 check("brain copy same", set(brain.TOOLS_BY_NAME) == names)
-check("phone SAFE 3 / CONFIRM 9",
+check("phone SAFE 3 / CONFIRM 12",
       all(permissions.risk(n) == "SAFE" for n in ("phone_status", "phone_screenshot", "phone_read_screen"))
       and all(permissions.risk(n) == "CONFIRM" for n in ("phone_open_app", "phone_type", "phone_tap",
                                                           "phone_tap_text", "phone_scroll", "phone_enter",
-                                                          "phone_back", "phone_home", "phone_media")))
+                                                          "phone_back", "phone_home", "phone_media",
+                                                          "phone_wake", "phone_unlock", "phone_lock")))
 check("NEVER tool banaya hi nahi",
       not [n for n in names if n.startswith("phone_")
            and any(w in n for w in ("install", "delete", "sms", "call", "shell", "adb", "settings", "reset", "pay"))])
@@ -252,6 +253,115 @@ for state, word in (("off", "screen off hai"), ("lock", "screen lock hai")):
             check(f"{state}: {label} refuse", word in str(e) and not acted())
 SCREEN[0] = "on"
 check("screen on: sab chalta hai", phone.tap(1, 1) is None)
+
+# ============================================
+# UNLOCK: PIN set (typed only) -> jagega, swipe, digits, enter, verify. Galat PIN par 2 try + cooldown.
+# ============================================
+import shortcuts   # noqa: E402
+import tempfile    # noqa: E402
+
+phone.ENV_FILE = os.path.join(tempfile.mkdtemp(), ".env")      # asli .env PIN kabhi na mile (test hermetic)
+phone.UNLOCK_WAIT = 0.05                                        # test: intezaar chhota
+
+
+def keyevents():
+    return [c for c in calls if len(c) > 2 and c[-3:-1] == ["input", "keyevent"]]
+
+
+def digits_sent():
+    """KEYCODE_0..9 (7-16) sirf - ENTER (66) waghera count nahi."""
+    return [str(int(c[-1]) - 7) for c in keyevents() if c[-1].isdigit() and 7 <= int(c[-1]) <= 16]
+
+
+def swipes():
+    return [c for c in calls if "swipe" in c]
+
+
+def tried_bad_pin(value):
+    try:
+        phone.pin_set(value)
+        return False
+    except phone.PhoneError:
+        return True
+
+
+calls.clear(); asked.clear()
+phone.pin_forget(save=False)
+phone._PIN, phone._PIN_UNTIL, phone._PIN_VIA_TEXT = None, 0.0, False
+check("pin: set nahi hai", not phone.pin_ready())
+r = run(tools.phone_unlock, "phone unlock kar do")
+check("unlock: PIN nahi hai to saaf message, kuch nahi bheja",
+      "type karke PIN set" in r and not acted() and not asked)
+
+# --- PIN set: sirf typed (voice pe nahi) ---
+tools.source = ""
+r = shortcuts.handle("phone pin 2468")
+check("pin: awaaz pe set nahi hota", "sirf chat box" in r and not phone.pin_ready())
+tools.source = "typed"
+r = shortcuts.handle("phone pin 2468")
+check("pin: typed se set (RAM) + reply", phone.pin_ready() and "set ho gaya" in r)
+check("pin: log/terminal se chhupa", "2468" not in tools.mask_private("phone pin 2468"))
+check("pin: 3 digit wala set nahi hota", tried_bad_pin("12") and phone.pin_ready())
+
+# --- Asli unlock flow (screen off + lock, nakla adb) ---
+SCREEN[0] = "off"
+PIN_SENT = {"d": ""}
+
+
+def adb_unlock_ok(args, binary=False, timeout=8):
+    """WAKEUP par screen on, sahi PIN ke baad unlock. Galat PIN par lock waisa hi."""
+    out = fake_adb(args, binary, timeout)
+    if len(args) > 2 and args[-3:-1] == ["input", "keyevent"]:
+        code = args[-1]
+        if code == "26":                     # WAKEUP
+            SCREEN[0] = "lock"
+        elif code == "66":                   # ENTER
+            SCREEN[0] = "on" if PIN_SENT["d"] == "2468" else SCREEN[0]
+            PIN_SENT["d"] = ""
+        elif code.isdigit() and 7 <= int(code) <= 16:
+            PIN_SENT["d"] += str(int(code) - 7)
+    elif len(args) > 2 and args[-3:-1] == ["input", "text"] and args[-1] == "2468":
+        SCREEN[0] = "on"
+    return out
+
+
+phone._adb = adb_unlock_ok
+tools.DRY_RUN = False          # asli flow test karna hai (adb nakla hai, phone asli nahi)
+phone._PIN_VIA_TEXT = False
+calls.clear(); asked.clear(); say(True)
+r = run(tools.phone_unlock, "phone unlock kar do")
+check("unlock: haan ke baad screen jagega + swipe + PIN digits + enter",
+      asked and digits_sent() == list("2468") and swipes() and "khol diya" in r and SCREEN[0] == "on")
+
+# --- Galat PIN: MAX 2 try, phir cooldown ---
+SCREEN[0] = "lock"
+phone._PIN = "9999"          # jaan-boojh kar galat PIN (fake sirf 2468 se khulata hai)
+phone._PIN_VIA_TEXT = False
+phone._PIN_UNTIL = 0.0
+calls.clear(); asked.clear(); say(True)
+r = run(tools.phone_unlock, "phone unlock kar do")
+check("unlock: galat PIN par 2 try (swipe) + input text fallback + saaf error",
+      len(swipes()) == 2 and digits_sent() == list("9999")
+      and any(c[-2:] == ["text", "9999"] for c in calls) and "khul nahi paya" in r)
+calls.clear()
+r = run(tools.phone_unlock, "phone unlock kar do")
+check("unlock: cooldown ke dauran koi try nahi", "thodi der ruka hoon" in r and not digits_sent())
+phone._PIN = "2468"
+phone._PIN_UNTIL = 0.0
+phone._PIN_UNTIL = 0.0
+phone._PIN_VIA_TEXT = False
+SCREEN[0] = "on"
+tools.DRY_RUN = True
+
+# --- wake / lock (DRY_RUN) ---
+phone._adb = fake_adb
+calls.clear(); asked.clear(); say(False)
+r = run(tools.phone_wake, "phone ka screen jaga do")
+say(True)
+r = run(tools.phone_lock, "phone band kar do")
+check("wake/lock: confirm + DRY_RUN", "nahi kiya" in r and "Test mode" in r and not acted())
+check("pin bhool jao: dono jagah se mita",
+      shortcuts.handle("phone pin bhool jao") and not phone.pin_ready())
 
 # --- tools: screen padhna / naam se tap / scroll / enter ---
 tools.private_reply = False

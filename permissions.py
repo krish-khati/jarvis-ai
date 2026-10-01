@@ -21,7 +21,7 @@ import tools
 
 SAFE, CONFIRM, NEVER = "SAFE", "CONFIRM", "NEVER"
 
-# Har tool ka risk level (tools.ALL_TOOLS ke 56 tools: 32 SAFE / 21 CONFIRM / 3 NEVER)
+# Har tool ka risk level (tools.ALL_TOOLS ke 59 tools: 32 SAFE / 24 CONFIRM / 3 NEVER)
 RISK = {
     # --- SAFE ---
     "web_search": SAFE, "get_weather": SAFE, "get_time_date": SAFE, "system_info": SAFE,
@@ -46,6 +46,7 @@ RISK = {
     "phone_open_app": CONFIRM, "phone_type": CONFIRM, "phone_tap": CONFIRM,     # Android phone: har baar haan
     "phone_tap_text": CONFIRM, "phone_scroll": CONFIRM, "phone_enter": CONFIRM,
     "phone_back": CONFIRM, "phone_home": CONFIRM, "phone_media": CONFIRM,
+    "phone_wake": CONFIRM, "phone_unlock": CONFIRM, "phone_lock": CONFIRM,     # screen on/off, PIN ka unlock
     # --- NEVER (agent ke liye band; Krish seedha bole to tool apne confirm ke saath chalta hai) ---
     "shutdown_pc": NEVER, "restart_pc": NEVER, "lock_pc": NEVER,
 }
@@ -66,7 +67,8 @@ INCOMING_MESSAGE_TOOLS = {"read_messages", "read_webpage", "read_screen", "phone
 SELF_CONFIRMING = {"send_whatsapp", "whatsapp_call", "save_memory", "close_app", "note_delete", "reminder_add",
                    "task_delete", "tasks_clear", "copy_last_content", "read_clipboard", "explain_clipboard",
                    "phone_open_app", "phone_type", "phone_tap", "phone_tap_text", "phone_scroll", "phone_enter",
-                   "phone_back", "phone_home", "phone_media"}
+                   "phone_back", "phone_home", "phone_media",
+                   "phone_wake", "phone_unlock", "phone_lock"}
 
 NEVER_LINE = "Ye main khud nahi karunga, sir. Aap seedha bolo."
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "agent.log")

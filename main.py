@@ -567,14 +567,15 @@ class Api:
             old_confirm, tools.confirm = tools.confirm, tools.timed_wait(ui_confirm)
             old_ask, tools.ask_user = tools.ask_user, tools.timed_wait(ui_prompt)
             old_say, agent.hooks["say"] = agent.hooks.get("say"), None      # Typed goal pe "dekhta hoon" bolke nahi
+            old_source, tools.source = tools.source, "typed"                # phone PIN jaise commands typed hi maante hain
             try:
                 reply = brain.ask(text) or ""
             except Exception as e:
                 print(f"(Brain error: {e})")
                 reply = "Sorry sir, abhi kuch gadbad ho gayi."
             finally:
-                tools.confirm, tools.ask_user = old_confirm, old_ask
-                agent.hooks["say"] = old_say
+                tools.confirm, tools.ask_user, agent.hooks["say"] = old_confirm, old_ask, old_say
+                tools.source = old_source
         private, tools.private_reply = tools.private_reply, False
         print("JARVIS (typed reply): [private]" if private else f"JARVIS (typed reply): {reply}")
         ui.log(f"Brain: {brain.last_brain}")

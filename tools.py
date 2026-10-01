@@ -909,10 +909,16 @@ NOTE_ADD_RX = re.compile(r"^\s*(?:(?:hey\s+)?jarvis[\s,]+)?(?:(?:ye|is|ek|a)\s+)
                          r"(?:(?:note|notes)\s+(?:likho|likh do|likh lo|add karo|save karo)|"
                          r"(?:take|add|make)\s+a\s+note(?:\s+that)?|note\s+down)\s*[:,\-]?\s*(?P<t>.+?)\s*$",
                          re.IGNORECASE | re.DOTALL)
+# "phone pin 1234" / "unlock pin: 1234" - PIN kabhi terminal ya log mein nahi dikhega
+PIN_SET_RX = re.compile(r"^\s*(?:(?:hey\s+)?jarvis[\s,]+)?(?:phone\s+|mobile\s+)?(?:unlock\s+)?"
+                        r"(?:pin|passcode|code)\s+(?:yaad\s*(?:raakh\s*(?:ke|kar)?)?|save|set\s+karo|karo)?\s*"
+                        r"[:,\-]?\s*\S+", re.IGNORECASE)
 
 
 def mask_private(text):
-    """Terminal/log ke liye: note likhwane wale command ka text chhupa do, baaki jaisa hai waisa."""
+    """Terminal/log ke liye: note likhwane wala command aur PIN dono chhupa do, baaki jaisa hai waisa."""
+    if PIN_SET_RX.match(str(text or "")):
+        return "(phone PIN set ho raha hai - chhupa hai)"
     return "(note likhwa rahe hain - text chhupa hai)" if NOTE_ADD_RX.match(str(text or "")) else text
 
 
@@ -1948,7 +1954,7 @@ def read_messages() -> str:
 # ============================================
 # ANDROID PHONE (phone.py, ADB, sirf ghar ka WiFi)
 #   SAFE: phone_status, phone_screenshot, phone_read_screen. CONFIRM (har baar haan): open_app, type,
-#   tap, tap_text, scroll, enter, back, home, media.
+#   tap, tap_text, scroll, enter, back, home, media, wake, unlock, lock.
 #   NEVER (tool hi nahi): install/uninstall, files delete, settings, factory reset, payment/UPI, SMS/call, free adb shell.
 #   Log/UI mein sirf tool naam: app ka naam, typed text kabhi nahi. Phone ki screen UNTRUSTED data.
 # ============================================
@@ -2122,6 +2128,50 @@ def phone_enter() -> str:
                      lambda: (phone.key("enter"), _phone_done("Phone pe Enter daba diya, sir."))[1])
 
 
+UNLOCK_WORDS = {"unlock", "unlock karo", "unlock kar do", "open karo", "kholo", "khol do", "chalu"}
+PHONE_LOCK_WORDS = {"lock", "lock karo", "lock kar do", "band karo", "band kar do", "sutao", "suta do"}
+
+
+@tool("Waking phone...", needs=PHONE_WORDS)
+def phone_wake() -> str:
+    """Turn the phone screen ON (only if it is off or dark). Asks Krish to confirm every time.
+    If the screen was locked, this only wakes it - use phone_unlock for the PIN."""
+    import phone
+    return _phone_do("Sir, phone ka screen jaga dun?", "wake up the phone screen",
+                     lambda: (phone.wake(), _phone_done("Phone ka screen jaga diya, sir."))[1])
+
+
+@tool("Unlocking phone...", needs=PHONE_WORDS | UNLOCK_WORDS)
+def phone_unlock() -> str:
+    """Unlock the Android phone when the screen is locked or off: wake it, swipe up and enter Krish's
+    saved PIN, then verify it really opened ('phone unlock kar do'). The PIN is never asked for or
+    printed here - it must already be set by typing 'phone pin <number>' in the chat box.
+    Asks Krish to confirm every time. Pattern/face/fingerprint lock will not open this way."""
+    import phone
+    if not phone.pin_ready():
+        raise DirectReply("Sir, pehle chat box mein type karke PIN set kar dijiye: phone pin <4-10 ka number>. "
+                          "Awaaz se PIN nahi le sakta, sir (safe nahi hai).", ok=False)
+    if not confirm("Sir, phone ka lock kholun (PIN daal kar)?"):
+        raise DirectReply("Theek hai sir, phone lock waisa hi reh gaya.", ok=False)
+    if DRY_RUN:
+        _dry_run("unlock the phone")
+        raise DirectReply("Test mode hai sir, phone ka lock nahi khulaya.")
+    try:
+        phone.unlock()
+    except phone.PhoneError as e:
+        _phone_fail(e)
+    raise DirectReply("Sir, phone ka lock khol diya.")
+
+
+@tool("Locking phone...", needs=PHONE_WORDS | PHONE_LOCK_WORDS)
+def phone_lock() -> str:
+    """Lock the Android phone by turning its screen off, so the PIN is needed again
+    ('phone band kar do', 'phone lock kar do'). Asks Krish to confirm every time."""
+    import phone
+    return _phone_do("Sir, phone band kar do (lock)?", "lock the phone",
+                     lambda: (phone.lock(), _phone_done("Phone lock kar diya, sir."))[1])
+
+
 # ============================================
 # Saare tools ki list - brain.py ye list Gemini ko deta hai
 # ============================================
@@ -2139,5 +2189,5 @@ ALL_TOOLS = [
     send_whatsapp, whatsapp_call, end_call, read_messages,
     phone_status, phone_screenshot, phone_read_screen,
     phone_open_app, phone_type, phone_tap, phone_tap_text, phone_scroll, phone_enter,
-    phone_back, phone_home, phone_media,
+    phone_back, phone_home, phone_media, phone_wake, phone_unlock, phone_lock,
 ]

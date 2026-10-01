@@ -670,6 +670,44 @@ def _voice_profile_command(command):
     return None
 
 
+# ============================================
+# PHONE PIN - sirf TYPE karke set hota hai (awaaz pe kabhi nahi: PIN mic se AI/voice vendor tak jaata hai)
+#   "phone pin 1234"            -> sirf is session (RAM), restart pe nahi
+#   "phone pin yaad rakh ke 1234" -> .env mein bhi (gitignored), restart ke baad bhi rahega
+#   "phone pin bhool jao"       -> dono jagah se mita
+# ============================================
+PIN_CMD = re.compile(r"^(?:phone\s+|mobile\s+)?(?:unlock\s+)?(?:pin|passcode|code)\s+"
+                     r"(?:(?P<save>yaad\s*(?:raakh\s*(?:ke|kar)?)?|save|permanent)\s+)?"
+                     r"(?:(?:set|daal)\s*(?:karo|do)\s*)?[:,\-]?\s*(?P<pin>\d[\d \-]{3,15})$")
+PIN_FORGET = re.compile(r"^(?:phone\s+|mobile\s+)?(?:unlock\s+)?(?:pin|passcode|code)\s+"
+                        r"(?:bhool|jholo|mitao|hatao|delete|remove|forget|reset)")
+
+
+def _phone_pin_command(command):
+    """Phone ka unlock PIN set/bhool jao. Sirf typed chat box se (tools.source == 'typed')."""
+    import phone
+    text = _clean(command)
+    if PIN_FORGET.match(text):
+        if not phone.pin_ready():
+            return "Sir, koi PIN set nahi hai abhi."
+        phone.pin_forget(save=True)
+        return ("Theek hai sir, phone ka PIN mita diya (RAM aur .env dono se). Ab jab tak dobara na set karenge, "
+                "'phone unlock kar do' bolne par sirf aap khud unlock karenge.")
+    m = PIN_CMD.match(text)
+    if not m:
+        return None
+    if tools.source != "typed":
+        return ("Sir, PIN sirf chat box mein type karke set hota hai - awaaz se PIN nahi leta, wo safe nahi hai. "
+                "Type karein: phone pin <number>")
+    try:
+        phone.pin_set(m["pin"], save=bool(m["save"]))
+    except phone.PhoneError as e:
+        return f"Sir, {e}"
+    where = "RAM aur .env (dono mein)" if m["save"] else "sirf is chalne wali session ke liye (RAM)"
+    return (f"Theek hai sir, phone ka PIN {where} set ho gaya. Ab phone lock ho to "
+            f"'phone unlock kar do' boliye.")
+
+
 def _media_command(text, hi):
     """Media / volume-relative / brightness commands. Jawab (text) ya None (AI ke liye)."""
     # --- Brightness: "brightness 50 karo" (pehle, warna up/down se takra jayega) ---
@@ -716,6 +754,11 @@ def handle(command):
     """Simple command ho to khud chala ke jawab (text) do, warna None."""
     text = _clean(command)
     hi = _hinglish(text)
+
+    # --- Phone PIN (sirf typed: "phone pin 1234"): sabse pehle, AI/phone tools tak kabhi nahi ---
+    reply = _phone_pin_command(command)
+    if reply:
+        return reply
 
     # --- Awaaz profile ("meri awaaz yaad karo" / "bhool jao"): sabse pehle, memory/AI/save_memory tak kabhi nahi ---
     reply = _voice_profile_command(command)
